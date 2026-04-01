@@ -21,6 +21,7 @@ tracking to CLAUDE.md or create TODO.md files.
 
 - **Issues:** https://github.com/scttfrdmn/quick-suite-model-router/issues
 - **Milestones:** https://github.com/scttfrdmn/quick-suite-model-router/milestones
+- **Project board:** https://github.com/users/scttfrdmn/projects/44
 - **Changelog:** CHANGELOG.md (keepachangelog format, semver 2.0)
 
 To report a bug or propose a feature, open a GitHub Issue with the appropriate
