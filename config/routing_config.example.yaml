@@ -1,0 +1,70 @@
+# Quick Suite Model Router — Routing Configuration
+#
+# Controls which LLM provider handles each tool type.
+# The router tries providers in order and falls back if unavailable.
+#
+# Format: provider/model_id
+#   bedrock/    — Bedrock Converse API (IAM, no extra credentials)
+#   anthropic/  — Anthropic Messages API (requires API key)
+#   openai/     — OpenAI Chat Completions API (requires API key)
+#   gemini/     — Google Generative AI API (requires API key)
+#
+# Customers: put your preferred provider first. To force OpenAI for
+# everything, just move it to the top of every list.
+
+routing:
+
+  analyze:
+    preferred:
+      - bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+      - anthropic/claude-sonnet-4-20250514
+      - openai/gpt-4o
+      - gemini/gemini-2.5-pro
+    system_prompt: >
+      You are an expert analyst. Provide thorough, well-structured
+      analysis with clear reasoning. Break complex topics into
+      components. Identify assumptions and confidence levels.
+
+  generate:
+    preferred:
+      - bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+      - openai/gpt-4o
+      - gemini/gemini-2.5-pro
+      - anthropic/claude-sonnet-4-20250514
+    system_prompt: >
+      You are a skilled content creator. Generate high-quality,
+      well-structured content appropriate for a professional audience.
+
+  research:
+    preferred:
+      - bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+      - gemini/gemini-2.5-pro
+      - anthropic/claude-sonnet-4-20250514
+      - openai/gpt-4o
+    system_prompt: >
+      You are a research assistant. Synthesize information thoroughly,
+      present multiple perspectives, and identify gaps or uncertainties.
+
+  summarize:
+    preferred:
+      - bedrock/amazon.nova-pro-v1:0
+      - openai/gpt-4o-mini
+      - gemini/gemini-2.5-flash
+      - bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+    system_prompt: >
+      You are a concise summarizer. Extract the most important points
+      and present them clearly and briefly.
+
+  code:
+    preferred:
+      - bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+      - anthropic/claude-sonnet-4-20250514
+      - openai/gpt-4o
+      - gemini/gemini-2.5-pro
+    system_prompt: >
+      You are an expert software engineer. Write clean, correct,
+      well-documented code. Explain design decisions.
+
+defaults:
+  max_tokens: 4096
+  temperature: 0.7

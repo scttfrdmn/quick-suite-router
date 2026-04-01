@@ -1,0 +1,150 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Quick Suite Multi-Model Router",
+    "description": "Task-oriented LLM access with multi-provider routing. Provides deep analysis, content generation, research synthesis, fast summarization, and code assistance using the best available model from Bedrock, Anthropic, OpenAI, or Google Gemini. All calls pass through Bedrock Guardrails regardless of provider.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "{api_endpoint}",
+      "description": "Deployed API Gateway endpoint (replace with CDK output value)",
+      "variables": {
+        "api_endpoint": {
+          "default": "https://REPLACE.execute-api.us-east-1.amazonaws.com/prod"
+        }
+      }
+    }
+  ],
+  "paths": {
+    "/tools/analyze": {
+      "post": {
+        "operationId": "analyze",
+        "summary": "Deep analysis",
+        "description": "Perform thorough analysis of documents, data, concepts, or problems. Routes to the strongest reasoning model available. Use for strategic analysis, technical deep-dives, document review, and complex problem decomposition.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolRequest" } } }
+        },
+        "responses": { "200": { "description": "Analysis complete", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolResponse" } } } } }
+      }
+    },
+    "/tools/generate": {
+      "post": {
+        "operationId": "generate",
+        "summary": "Content generation",
+        "description": "Generate high-quality content — reports, emails, proposals, presentations, creative writing. Routes to the best available generation model.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolRequest" } } }
+        },
+        "responses": { "200": { "description": "Content generated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolResponse" } } } } }
+      }
+    },
+    "/tools/research": {
+      "post": {
+        "operationId": "research",
+        "summary": "Research synthesis",
+        "description": "Synthesize information from provided context into comprehensive research summaries. Provide source material in the context field.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolRequest" } } }
+        },
+        "responses": { "200": { "description": "Research synthesis complete", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolResponse" } } } } }
+      }
+    },
+    "/tools/summarize": {
+      "post": {
+        "operationId": "summarize",
+        "summary": "Fast summarization",
+        "description": "Quickly summarize long documents, meeting transcripts, or data reports. Routes to the fastest cost-effective model available.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolRequest" } } }
+        },
+        "responses": { "200": { "description": "Summary complete", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolResponse" } } } } }
+      }
+    },
+    "/tools/code": {
+      "post": {
+        "operationId": "code",
+        "summary": "Code assistance",
+        "description": "Generate, review, debug, or explain code. Supports all major languages. Routes to the strongest code-capable model.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolRequest" } } }
+        },
+        "responses": { "200": { "description": "Code assistance complete", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolResponse" } } } } }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Health check",
+        "responses": { "200": { "description": "Healthy" } }
+      }
+    },
+    "/status": {
+      "get": {
+        "operationId": "status",
+        "summary": "Provider status",
+        "description": "Returns which LLM providers are configured and available.",
+        "responses": { "200": { "description": "Provider status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatusResponse" } } } } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ToolRequest": {
+        "type": "object",
+        "required": ["prompt"],
+        "properties": {
+          "prompt": { "type": "string", "description": "The task prompt." },
+          "context": { "type": "string", "description": "Additional context (documents, data, background)." },
+          "provider": { "type": "string", "enum": ["bedrock", "anthropic", "openai", "gemini"], "description": "Force a specific provider. Omit to let the router choose." },
+          "max_tokens": { "type": "integer", "default": 4096 },
+          "temperature": { "type": "number", "default": 0.7, "minimum": 0, "maximum": 1 },
+          "skip_cache": { "type": "boolean", "default": false, "description": "Bypass response cache." }
+        }
+      },
+      "ToolResponse": {
+        "type": "object",
+        "properties": {
+          "content": { "type": "string" },
+          "provider": { "type": "string" },
+          "model": { "type": "string" },
+          "input_tokens": { "type": "integer" },
+          "output_tokens": { "type": "integer" },
+          "latency_ms": { "type": "integer" },
+          "cached": { "type": "boolean" },
+          "guardrail_applied": { "type": "boolean" },
+          "guardrail_blocked": { "type": "boolean" },
+          "metadata": { "type": "object", "description": "Provider-specific metadata (stop_reason, finish_reason, request_id, etc.)" },
+          "error": { "type": "string", "description": "Error message if the request failed." },
+          "tool": { "type": "string", "description": "Tool name that was requested; present on 503 all-providers-failed responses." },
+          "last_error": { "type": "object", "description": "Last provider error payload; present on 503 all-providers-failed responses." }
+        }
+      },
+      "StatusResponse": {
+        "type": "object",
+        "properties": {
+          "providers": { "type": "object" },
+          "tools": { "type": "array", "items": { "type": "string" } },
+          "cache_enabled": { "type": "boolean" }
+        }
+      }
+    },
+    "securitySchemes": {
+      "cognito": {
+        "type": "oauth2",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "{cognito_token_url}",
+            "scopes": { "model-router/invoke": "Invoke model router tools" }
+          }
+        }
+      }
+    }
+  },
+  "security": [{ "cognito": ["model-router/invoke"] }]
+}

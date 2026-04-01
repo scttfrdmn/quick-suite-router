@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+.eggs/
+
+# Virtual env
+.venv/
+venv/
+ENV/
+
+# CDK
+cdk.out/
+.cdk.staging/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config (may contain account-specific values)
+config/routing_config.yaml
+!config/routing_config.example.yaml
+
+# Node
+node_modules/

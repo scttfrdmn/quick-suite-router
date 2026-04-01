@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: CDK synth
+        run: uv run cdk synth --quiet
+        env:
+          CDK_DEFAULT_ACCOUNT: "123456789012"
+          CDK_DEFAULT_REGION: "us-east-1"
+
+      - name: Run tests
+        run: uv run pytest tests/ --cov=lambdas --cov-report=term-missing -v
+
+      - name: Lint
+        run: uv run ruff check lambdas/ stacks/ tests/
+
+  integration:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Build Substrate
+        run: |
+          git clone https://github.com/scttfrdmn/substrate.git ~/src/substrate
+          cd ~/src/substrate && go build -o bin/substrate ./cmd/substrate
+
+      - name: Run integration tests
+        run: uv run pytest -m integration tests/ -v
+        env:
+          CDK_DEFAULT_ACCOUNT: "123456789012"
+          CDK_DEFAULT_REGION: "us-east-1"

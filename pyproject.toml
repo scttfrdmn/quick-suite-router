@@ -1,0 +1,33 @@
+[project]
+name = "quick-suite-model-router"
+version = "0.1.0"
+description = "Multi-provider LLM router for Amazon Quick Suite via Bedrock AgentCore Gateway"
+requires-python = ">=3.12"
+dependencies = [
+    "aws-cdk-lib>=2.170.0",
+    "constructs>=10.0.0",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "moto[dynamodb,secretsmanager,lambda]>=5.0",
+    "requests>=2.31",
+    "ruff>=0.4",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires Substrate running (auto-started from ~/src/substrate)",
+]
