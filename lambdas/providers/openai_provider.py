@@ -4,6 +4,16 @@ OpenAI Provider — Direct access via Chat Completions API.
 Designed for universities and organizations with OpenAI site licenses.
 They bring their existing API key; we route through AWS governance.
 Auth: API key (+ optional org ID) in Secrets Manager.
+
+Streaming note (v0.6.0):
+  When the caller sets stream=True, this provider uses OpenAI's SSE streaming
+  Chat Completions API. Because AgentCore Lambda targets are invoked directly
+  (not via Lambda function URLs), true SSE push to the caller is not supported.
+  Instead, chunks collected during the HTTP stream are returned as a list in
+  the `chunks` field alongside the fully assembled `content`. Guardrails are
+  applied to the assembled final text. Token counts are derived from chunk
+  deltas (accumulated during streaming, since the stream [DONE] event does not
+  include usage when streaming).
 """
 
 import json
@@ -49,6 +59,7 @@ def handler(event, context):
     system_prompt = event.get("system_prompt", "")
     max_tokens = event.get("max_tokens", 4096)
     temperature = event.get("temperature", 0.7)
+    stream = bool(event.get("stream", False))
 
     if not prompt:
         return _err("No prompt provided")
@@ -124,6 +135,13 @@ def handler(event, context):
     if creds.get("organization"):
         headers["OpenAI-Organization"] = creds["organization"]
 
+    if stream:
+        return _invoke_streaming(payload, headers, model, _guardrail_ok)
+    return _invoke_blocking(payload, headers, model, _guardrail_ok)
+
+
+def _invoke_blocking(payload, headers, model, guardrail_ok):
+    """Standard (non-streaming) OpenAI Chat Completions call."""
     try:
         req = urllib_request.Request(
             API_URL,
@@ -151,7 +169,7 @@ def handler(event, context):
             "model": model,
             "input_tokens": usage.get("prompt_tokens", 0),
             "output_tokens": usage.get("completion_tokens", 0),
-            "guardrail_applied": _guardrail_ok,
+            "guardrail_applied": guardrail_ok,
             "guardrail_blocked": output_blocked,
             "metadata": {
                 "finish_reason": choices[0].get("finish_reason", "") if choices else "",
@@ -171,6 +189,105 @@ def handler(event, context):
 
     except Exception as e:
         logger.error(f"OpenAI invocation failed: {e}")
+        return _err(str(e))
+
+
+def _invoke_streaming(payload, headers, model, guardrail_ok):
+    """
+    Streaming OpenAI Chat Completions call.
+
+    Parses SSE `data:` lines, handles `[DONE]` terminator, and assembles
+    text deltas from `choices[0].delta.content`. Because AgentCore Lambda
+    targets cannot push SSE to the caller, all chunks are collected and
+    returned in `chunks` alongside fully assembled `content`. Guardrails
+    are applied to the assembled final text.
+    """
+    stream_payload = {**payload, "stream": True, "stream_options": {"include_usage": True}}
+    try:
+        req = urllib_request.Request(
+            API_URL,
+            data=json.dumps(stream_payload).encode(),
+            headers=headers,
+            method="POST",
+        )
+        chunks = []
+        assembled = []
+        input_tokens = 0
+        output_tokens = 0
+        finish_reason = ""
+        resp_id = ""
+        actual_model = ""
+
+        with urllib_request.urlopen(req, timeout=110) as resp:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\n\r")
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    evt = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                if not resp_id:
+                    resp_id = evt.get("id", "")
+                if not actual_model:
+                    actual_model = evt.get("model", "")
+
+                # Usage chunk (sent with stream_options.include_usage)
+                usage = evt.get("usage")
+                if usage:
+                    input_tokens = usage.get("prompt_tokens", input_tokens)
+                    output_tokens = usage.get("completion_tokens", output_tokens)
+
+                choices = evt.get("choices", [])
+                if choices:
+                    delta = choices[0].get("delta", {})
+                    text = delta.get("content", "")
+                    if text:
+                        chunks.append(text)
+                        assembled.append(text)
+                    fr = choices[0].get("finish_reason")
+                    if fr:
+                        finish_reason = fr
+
+        content = "".join(assembled)
+
+        # Apply guardrail to fully assembled output
+        content, output_blocked = apply_guardrail_safe(
+            content, GUARDRAIL_ID, GUARDRAIL_VERSION, source="OUTPUT"
+        )
+
+        return {
+            "content": content,
+            "chunks": chunks,
+            "streaming": True,
+            "provider": "openai",
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "guardrail_applied": guardrail_ok,
+            "guardrail_blocked": output_blocked,
+            "metadata": {
+                "finish_reason": finish_reason,
+                "id": resp_id,
+                "actual_model": actual_model,
+            },
+        }
+
+    except HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        logger.error(f"OpenAI streaming API {e.code}: {body[:300]}")
+        if e.code == 429:
+            return _err("Rate limited by OpenAI API")
+        if e.code == 401:
+            return _err("Invalid OpenAI API key or organization")
+        return _err(f"OpenAI API error {e.code}")
+
+    except Exception as e:
+        logger.error(f"OpenAI streaming invocation failed: {e}")
         return _err(str(e))
 
 

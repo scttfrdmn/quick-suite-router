@@ -8,6 +8,16 @@ dispatches to the appropriate provider Lambda.
 Entry points:
   POST /tools/{tool}  — route to provider
   GET  /status        — show configured providers
+
+Streaming (v0.6.0):
+  Callers may set `stream: true` in the request body for the `generate` and
+  `research` tool endpoints. The flag is forwarded to the provider Lambda,
+  which collects SSE chunks from the upstream LLM API and returns them in a
+  `chunks` list alongside the fully assembled `content` field. This "buffered
+  streaming" pattern is used because AgentCore Lambda targets are invoked
+  directly (not via Lambda function URLs), so true SSE push is not available.
+  The full response is still written to the DynamoDB cache on completion.
+  Non-streaming callers (stream omitted or false) are unaffected.
 """
 
 import json
@@ -143,6 +153,18 @@ def handle_tool_invocation(event):
 
     department = str(body.get("department") or "").strip()
 
+    # Streaming — only supported for generate and research tools
+    _stream_flag = body.get("stream", False)
+    stream = (_stream_flag.lower() in ("true", "1", "yes") if isinstance(_stream_flag, str) else bool(_stream_flag))
+    STREAMING_TOOLS = {"generate", "research"}
+    if stream and tool not in STREAMING_TOOLS:
+        stream = False
+        logger.info(json.dumps({
+            "stream_ignored": True,
+            "tool": tool,
+            "reason": f"streaming only supported for {sorted(STREAMING_TOOLS)}",
+        }))
+
     # Select provider
     provider_key, model_id = select_provider(tool, body.get("provider"), department)
     if not provider_key:
@@ -175,6 +197,7 @@ def handle_tool_invocation(event):
         "temperature": temperature,
         "tool_name": tool,
         "context": body.get("context", ""),
+        "stream": stream,
     }
 
     # Invoke provider

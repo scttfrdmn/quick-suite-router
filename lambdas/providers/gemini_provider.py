@@ -3,6 +3,15 @@ Gemini Provider — Direct access via Google Generative AI API.
 
 Designed for universities with Google Workspace / AI Enterprise agreements.
 Auth: Google AI API key in Secrets Manager.
+
+Streaming note (v0.6.0):
+  When the caller sets stream=True, this provider uses the
+  `streamGenerateContent` endpoint (SSE). Because AgentCore Lambda targets
+  are invoked directly (not via Lambda function URLs), true SSE push to the
+  caller is not supported. Instead, chunks collected during the HTTP stream
+  are returned as a list in `chunks` alongside the fully assembled `content`.
+  Guardrails are applied to the assembled final text. Token counts come from
+  the final SSE response chunk's `usageMetadata` field.
 """
 
 import json
@@ -53,6 +62,7 @@ def handler(event, context):
     system_prompt = event.get("system_prompt", "")
     max_tokens = event.get("max_tokens", 4096)
     temperature = event.get("temperature", 0.7)
+    stream = bool(event.get("stream", False))
 
     if not prompt:
         return _err("No prompt provided")
@@ -111,6 +121,7 @@ def handler(event, context):
         contents = [{"role": "user", "parts": [{"text": prompt}]}]
 
     url = f"{API_BASE}/{model}:generateContent"
+    stream_url = f"{API_BASE}/{model}:streamGenerateContent?alt=sse"
 
     payload = {
         "contents": contents,
@@ -133,11 +144,20 @@ def handler(event, context):
     if system_prompt:
         payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
 
+    gemini_headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+
+    if stream:
+        return _invoke_streaming(stream_url, payload, gemini_headers, model, _guardrail_ok)
+    return _invoke_blocking(url, payload, gemini_headers, model, _guardrail_ok)
+
+
+def _invoke_blocking(url, payload, headers, model, guardrail_ok):
+    """Standard (non-streaming) Gemini generateContent call."""
     try:
         req = urllib_request.Request(
             url,
             data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+            headers=headers,
             method="POST",
         )
         with urllib_request.urlopen(req, timeout=110) as resp:
@@ -164,7 +184,7 @@ def handler(event, context):
             "model": model,
             "input_tokens": usage.get("promptTokenCount", 0),
             "output_tokens": usage.get("candidatesTokenCount", 0),
-            "guardrail_applied": _guardrail_ok,
+            "guardrail_applied": guardrail_ok,
             "guardrail_blocked": output_blocked or finish == "SAFETY",
             "metadata": {
                 "finish_reason": finish,
@@ -183,6 +203,100 @@ def handler(event, context):
 
     except Exception as e:
         logger.error(f"Gemini invocation failed: {e}")
+        return _err(str(e))
+
+
+def _invoke_streaming(url, payload, headers, model, guardrail_ok):
+    """
+    Streaming Gemini streamGenerateContent call (alt=sse).
+
+    Each SSE `data:` line carries a GenerateContentResponse JSON object.
+    Text is extracted from candidates[0].content.parts[]. The final chunk
+    includes usageMetadata. Because AgentCore Lambda targets cannot push SSE
+    to the caller, chunks are collected and returned in `chunks` alongside
+    fully assembled `content`. Guardrails are applied to the assembled text.
+    """
+    try:
+        req = urllib_request.Request(
+            url,
+            data=json.dumps(payload).encode(),
+            headers=headers,
+            method="POST",
+        )
+        chunks = []
+        assembled = []
+        input_tokens = 0
+        output_tokens = 0
+        finish_reason = ""
+        model_version = ""
+
+        with urllib_request.urlopen(req, timeout=110) as resp:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\n\r")
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    evt = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                if not model_version:
+                    model_version = evt.get("modelVersion", "")
+
+                usage = evt.get("usageMetadata", {})
+                if usage:
+                    input_tokens = usage.get("promptTokenCount", input_tokens)
+                    output_tokens = usage.get("candidatesTokenCount", output_tokens)
+
+                candidates = evt.get("candidates", [])
+                if candidates:
+                    candidate = candidates[0]
+                    fr = candidate.get("finishReason", "")
+                    if fr:
+                        finish_reason = fr
+                    for part in candidate.get("content", {}).get("parts", []):
+                        text = part.get("text", "")
+                        if text:
+                            chunks.append(text)
+                            assembled.append(text)
+
+        content = "".join(assembled)
+
+        # Apply guardrail to fully assembled output
+        content, output_blocked = apply_guardrail_safe(
+            content, GUARDRAIL_ID, GUARDRAIL_VERSION, source="OUTPUT"
+        )
+
+        return {
+            "content": content,
+            "chunks": chunks,
+            "streaming": True,
+            "provider": "gemini",
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "guardrail_applied": guardrail_ok,
+            "guardrail_blocked": output_blocked or finish_reason == "SAFETY",
+            "metadata": {
+                "finish_reason": finish_reason,
+                "model_version": model_version,
+            },
+        }
+
+    except HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        logger.error(f"Gemini streaming API {e.code}: {body[:300]}")
+        if e.code == 429:
+            return _err("Rate limited by Gemini API")
+        if e.code == 403:
+            return _err("Gemini API key invalid or model not enabled")
+        return _err(f"Gemini API error {e.code}")
+
+    except Exception as e:
+        logger.error(f"Gemini streaming invocation failed: {e}")
         return _err(str(e))
 
 

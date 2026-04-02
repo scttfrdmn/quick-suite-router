@@ -27,9 +27,9 @@ tracking to CLAUDE.md or create TODO.md files.
 To report a bug or propose a feature, open a GitHub Issue with the appropriate
 label. All release planning happens via milestones.
 
-## Current State
+## Current State — v0.6.0
 
-### File Inventory (25 files)
+### File Inventory (26 files)
 
 **Code:**
 - `app.py` — CDK entry point
@@ -39,13 +39,13 @@ label. All release planning happens via milestones.
 - `stacks/model_router_stack.py` — main CDK stack (Cognito, Secrets Manager,
   Lambdas, API Gateway, Bedrock Guardrail, DynamoDB cache, CloudWatch dashboard)
 - `lambdas/router/handler.py` — task classification, provider selection,
-  cache check, fallback logic
+  cache check, fallback logic; `stream: true` forwarded for generate/research
 - `lambdas/common/python/provider_interface.py` — shared governance utilities
   (guardrails, CloudWatch metrics, DynamoDB cache helpers)
-- `lambdas/providers/bedrock_provider.py` — Bedrock Converse API
-- `lambdas/providers/anthropic_provider.py` — Anthropic Messages API
-- `lambdas/providers/openai_provider.py` — OpenAI Chat Completions API
-- `lambdas/providers/gemini_provider.py` — Google Generative AI API
+- `lambdas/providers/bedrock_provider.py` — Bedrock Converse + converse_stream API
+- `lambdas/providers/anthropic_provider.py` — Anthropic Messages API (blocking + streaming)
+- `lambdas/providers/openai_provider.py` — OpenAI Chat Completions API (blocking + streaming)
+- `lambdas/providers/gemini_provider.py` — Google Generative AI API (blocking + streaming)
 
 **Config:**
 - `config/routing_config.example.yaml` — provider preference lists per tool

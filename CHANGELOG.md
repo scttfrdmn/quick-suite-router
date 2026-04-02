@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-02
+
+### Added
+- SSE streaming support for `generate` and `research` tool endpoints (`stream: true` request flag)
+- Buffered streaming pattern: providers collect SSE chunks from upstream LLM APIs and return them in a `chunks` list alongside the fully assembled `content` field; `streaming: true` added to response when active
+- Anthropic streaming: `_invoke_streaming()` in `anthropic_provider.py` handles `message_start`, `content_block_delta`, `message_delta`, and `message_stop` SSE event types; token counts sourced from `message_delta` usage
+- OpenAI streaming: `_invoke_streaming()` in `openai_provider.py` parses `data:` SSE lines, handles `[DONE]` terminator; token counts sourced from `stream_options.include_usage` chunk
+- Bedrock streaming: `_invoke_streaming()` in `bedrock_provider.py` uses `converse_stream()`, maps `contentBlockDelta` events to chunks; `metadata` event provides token counts
+- Gemini streaming: `_invoke_streaming()` in `gemini_provider.py` uses `streamGenerateContent?alt=sse` endpoint; `usageMetadata` in final chunk provides token counts
+- Guardrails applied to fully assembled text in all streaming paths (not individual chunks)
+- Stream flag silently ignored (with structured log warning) for non-streaming tools (`analyze`, `summarize`, `code`)
+- Full cache write for streaming responses at low temperature (same as non-streaming)
+- 31 new unit tests covering all streaming paths and edge cases
+
 ## [0.5.0] - 2026-04-02
 
 ### Added
@@ -70,7 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Secrets Manager integration for external provider API keys (no env-var key storage)
 - CDK stack with full infrastructure-as-code deployment (Cognito, API Gateway, Lambdas, DynamoDB, Guardrail, CloudWatch dashboard)
 
-[unreleased]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.5.0...HEAD
+[unreleased]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.4.1...v0.5.0
 [0.4.0]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.2.0...v0.3.0
