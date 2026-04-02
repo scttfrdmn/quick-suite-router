@@ -9,9 +9,9 @@ Each provider is tested for:
 - Empty prompt returns error
 - Missing credentials returns error (external providers)
 - Response schema has all expected fields
-- Context prepend (TODO §2)
-- Guardrail input block (TODO §1)
-- Guardrail output block (TODO §1)
+- Context prepend
+- Guardrail input block
+- Guardrail output block
 """
 
 import sys
@@ -94,7 +94,7 @@ class TestAnthropicProvider:
     def test_successful_invocation(self):
         p = self._provider()
         with patch.object(p, "_api_key", "sk-test"), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", return_value=_http_response(self.API_SUCCESS)):
             result = p.handler({"prompt": "Analyze this"}, None)
         assert EXPECTED_FIELDS.issubset(result.keys())
@@ -118,7 +118,7 @@ class TestAnthropicProvider:
     def test_rate_limit_429(self):
         p = self._provider()
         with patch.object(p, "_api_key", "sk-test"), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=_http_error(429)):
             result = p.handler({"prompt": "Hello"}, None)
         assert "error" in result
@@ -127,7 +127,7 @@ class TestAnthropicProvider:
     def test_auth_failure_401(self):
         p = self._provider()
         with patch.object(p, "_api_key", "sk-bad"), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=_http_error(401)):
             result = p.handler({"prompt": "Hello"}, None)
         assert "error" in result
@@ -136,7 +136,7 @@ class TestAnthropicProvider:
     def test_timeout_returns_error(self):
         p = self._provider()
         with patch.object(p, "_api_key", "sk-test"), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
             result = p.handler({"prompt": "Hello"}, None)
         assert "error" in result
@@ -148,7 +148,7 @@ class TestAnthropicProvider:
             captured["body"] = json.loads(req.data.decode())
             return _http_response(self.API_SUCCESS)
         with patch.object(p, "_api_key", "sk-test"), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=fake_urlopen):
             p.handler({"prompt": "Summarize", "context": "Revenue grew 20%"}, None)
         msg_content = captured["body"]["messages"][0]["content"]
@@ -158,7 +158,7 @@ class TestAnthropicProvider:
     def test_guardrail_input_block_returns_early(self):
         p = self._provider()
         with patch.object(p, "_api_key", "sk-test"), \
-             patch.object(p, "apply_guardrail", side_effect=self._block_input):
+             patch.object(p, "apply_guardrail_safe", side_effect=self._block_input):
             result = p.handler({"prompt": "Bad content"}, None)
         assert result["guardrail_blocked"] is True
         assert result["input_tokens"] == 0
@@ -166,11 +166,31 @@ class TestAnthropicProvider:
     def test_guardrail_output_block(self):
         p = self._provider()
         with patch.object(p, "_api_key", "sk-test"), \
-             patch.object(p, "apply_guardrail", side_effect=self._block_output), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._block_output), \
              patch("urllib.request.urlopen", return_value=_http_response(self.API_SUCCESS)):
             result = p.handler({"prompt": "Hello"}, None)
         assert result["guardrail_blocked"] is True
         assert "blocked" in result["content"].lower()
+
+    def test_multi_turn_history_prepended_as_messages(self):
+        p = self._provider()
+        captured = {}
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode())
+            return _http_response(self.API_SUCCESS)
+        history = [
+            {"role": "user", "content": "What is the enrollment trend?"},
+            {"role": "assistant", "content": "Enrollment has grown 5% annually."},
+        ]
+        with patch.object(p, "_api_key", "sk-test"), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            p.handler({"prompt": "Explain further", "context": json.dumps(history)}, None)
+        messages = captured["body"]["messages"]
+        assert messages[0]["role"] == "user"
+        assert "enrollment trend" in messages[0]["content"]
+        assert messages[1]["role"] == "assistant"
+        assert messages[-1]["content"] == "Explain further"
 
 
 # ===========================================================================
@@ -204,7 +224,7 @@ class TestOpenAIProvider:
     def test_successful_invocation(self):
         p = self._provider()
         with patch.object(p, "_creds", {"api_key": "sk-test"}), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", return_value=_http_response(self.API_SUCCESS)):
             result = p.handler({"prompt": "Analyze this"}, None)
         assert EXPECTED_FIELDS.issubset(result.keys())
@@ -225,7 +245,7 @@ class TestOpenAIProvider:
     def test_rate_limit_429(self):
         p = self._provider()
         with patch.object(p, "_creds", {"api_key": "sk-test"}), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=_http_error(429)):
             result = p.handler({"prompt": "Hello"}, None)
         assert "Rate limited" in result["error"]
@@ -233,7 +253,7 @@ class TestOpenAIProvider:
     def test_auth_failure_401(self):
         p = self._provider()
         with patch.object(p, "_creds", {"api_key": "sk-bad"}), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=_http_error(401)):
             result = p.handler({"prompt": "Hello"}, None)
         assert "Invalid" in result["error"]
@@ -241,7 +261,7 @@ class TestOpenAIProvider:
     def test_timeout_returns_error(self):
         p = self._provider()
         with patch.object(p, "_creds", {"api_key": "sk-test"}), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
             result = p.handler({"prompt": "Hello"}, None)
         assert "error" in result
@@ -253,7 +273,7 @@ class TestOpenAIProvider:
             captured["body"] = json.loads(req.data.decode())
             return _http_response(self.API_SUCCESS)
         with patch.object(p, "_creds", {"api_key": "sk-test"}), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=fake_urlopen):
             p.handler({"prompt": "Summarize", "context": "Q3 revenue up"}, None)
         user_msg = captured["body"]["messages"][-1]["content"]
@@ -262,10 +282,30 @@ class TestOpenAIProvider:
     def test_guardrail_input_block_returns_early(self):
         p = self._provider()
         with patch.object(p, "_creds", {"api_key": "sk-test"}), \
-             patch.object(p, "apply_guardrail", side_effect=self._block_input):
+             patch.object(p, "apply_guardrail_safe", side_effect=self._block_input):
             result = p.handler({"prompt": "Bad content"}, None)
         assert result["guardrail_blocked"] is True
         assert result["input_tokens"] == 0
+
+    def test_multi_turn_history_prepended_as_messages(self):
+        p = self._provider()
+        captured = {}
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode())
+            return _http_response(self.API_SUCCESS)
+        history = [
+            {"role": "user", "content": "What is the retention rate?"},
+            {"role": "assistant", "content": "It is 85%."},
+        ]
+        with patch.object(p, "_creds", {"api_key": "sk-test"}), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            p.handler({"prompt": "Compare to peers", "context": json.dumps(history)}, None)
+        messages = captured["body"]["messages"]
+        # System message may be first; last message is the current prompt
+        user_messages = [m for m in messages if m["role"] == "user"]
+        assert any("retention rate" in m["content"] for m in user_messages)
+        assert messages[-1]["content"] == "Compare to peers"
 
 
 # ===========================================================================
@@ -298,7 +338,7 @@ class TestGeminiProvider:
     def test_successful_invocation(self):
         p = self._provider()
         with patch.object(p, "_api_key", "goog-key"), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", return_value=_http_response(self.API_SUCCESS)):
             result = p.handler({"prompt": "Analyze this"}, None)
         assert EXPECTED_FIELDS.issubset(result.keys())
@@ -318,7 +358,7 @@ class TestGeminiProvider:
     def test_rate_limit_429(self):
         p = self._provider()
         with patch.object(p, "_api_key", "goog-key"), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=_http_error(429)):
             result = p.handler({"prompt": "Hello"}, None)
         assert "Rate limited" in result["error"]
@@ -326,7 +366,7 @@ class TestGeminiProvider:
     def test_auth_failure_403(self):
         p = self._provider()
         with patch.object(p, "_api_key", "bad-key"), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=_http_error(403)):
             result = p.handler({"prompt": "Hello"}, None)
         assert "invalid" in result["error"].lower() or "not enabled" in result["error"].lower()
@@ -334,7 +374,7 @@ class TestGeminiProvider:
     def test_timeout_returns_error(self):
         p = self._provider()
         with patch.object(p, "_api_key", "goog-key"), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
             result = p.handler({"prompt": "Hello"}, None)
         assert "error" in result
@@ -346,7 +386,7 @@ class TestGeminiProvider:
             captured["body"] = json.loads(req.data.decode())
             return _http_response(self.API_SUCCESS)
         with patch.object(p, "_api_key", "goog-key"), \
-             patch.object(p, "apply_guardrail", side_effect=self._no_guardrail), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
              patch("urllib.request.urlopen", side_effect=fake_urlopen):
             p.handler({"prompt": "Summarize", "context": "Enrollment dropped 5%"}, None)
         user_text = captured["body"]["contents"][0]["parts"][0]["text"]
@@ -355,10 +395,30 @@ class TestGeminiProvider:
     def test_guardrail_input_block_returns_early(self):
         p = self._provider()
         with patch.object(p, "_api_key", "goog-key"), \
-             patch.object(p, "apply_guardrail", side_effect=self._block_input):
+             patch.object(p, "apply_guardrail_safe", side_effect=self._block_input):
             result = p.handler({"prompt": "Bad content"}, None)
         assert result["guardrail_blocked"] is True
         assert result["input_tokens"] == 0
+
+    def test_multi_turn_history_maps_assistant_to_model(self):
+        p = self._provider()
+        captured = {}
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode())
+            return _http_response(self.API_SUCCESS)
+        history = [
+            {"role": "user", "content": "Show me the trend."},
+            {"role": "assistant", "content": "Enrollment grew 3%."},
+        ]
+        with patch.object(p, "_api_key", "goog-key"), \
+             patch.object(p, "apply_guardrail_safe", side_effect=self._no_guardrail), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            p.handler({"prompt": "Predict next year", "context": json.dumps(history)}, None)
+        contents = captured["body"]["contents"]
+        roles = [c["role"] for c in contents]
+        assert "model" in roles  # assistant → model mapping
+        assert contents[-1]["role"] == "user"
+        assert contents[-1]["parts"][0]["text"] == "Predict next year"
 
 
 # ===========================================================================

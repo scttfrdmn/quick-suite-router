@@ -349,6 +349,54 @@ class TestToolInvocationValidation:
             result = h.handle_tool_invocation(event)
         assert result["statusCode"] == 200
 
+    def test_temperature_at_boundary_one_accepted(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        success = {"content": "ok", "provider": "bedrock", "model": "m",
+                   "input_tokens": 0, "output_tokens": 0,
+                   "guardrail_applied": False, "guardrail_blocked": False}
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(success)):
+            event = {"tool": "analyze", "body": json.dumps({"prompt": "Hello", "temperature": 1.0})}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200
+
+    def test_temperature_below_zero_returns_400(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        event = {"tool": "analyze", "body": json.dumps({"prompt": "Hello", "temperature": -0.1})}
+        result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 400
+        assert "temperature" in json.loads(result["body"])["error"]
+
+    def test_max_tokens_at_minimum_accepted(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        success = {"content": "ok", "provider": "bedrock", "model": "m",
+                   "input_tokens": 0, "output_tokens": 0,
+                   "guardrail_applied": False, "guardrail_blocked": False}
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(success)):
+            event = {"tool": "analyze", "body": json.dumps({"prompt": "Hello", "max_tokens": 1})}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200
+
+    def test_max_tokens_at_maximum_accepted(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        success = {"content": "ok", "provider": "bedrock", "model": "m",
+                   "input_tokens": 0, "output_tokens": 0,
+                   "guardrail_applied": False, "guardrail_blocked": False}
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(success)):
+            event = {"tool": "analyze", "body": json.dumps({"prompt": "Hello", "max_tokens": 16384})}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200
+
+    def test_prompt_too_large_returns_400(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        big_prompt = "x" * 100_001
+        event = {"tool": "analyze", "body": json.dumps({"prompt": big_prompt})}
+        result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 400
+        assert "Prompt" in json.loads(result["body"])["error"]
+
 
 # ---------------------------------------------------------------------------
 # Department overrides
@@ -382,6 +430,14 @@ class TestDepartmentOverrides:
         result = h._preferred_for("analyze", "unknown-dept")
         assert len(result) > 0
         assert "bedrock" in result[0]
+
+    def test_unknown_department_logs_warning(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        with patch.object(h.logger, "warning") as mock_warn:
+            h._preferred_for("analyze", "mystery-dept")
+        assert mock_warn.called
+        logged = json.loads(mock_warn.call_args[0][0])
+        assert logged.get("unrecognized_department") == "mystery-dept"
 
     def test_department_override_missing_tool_falls_back(self, provider_functions, provider_secrets):
         config = {

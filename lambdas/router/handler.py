@@ -235,9 +235,15 @@ def _preferred_for(tool: str, department: str = "") -> list:
     """Return the preferred provider list for a tool, respecting department overrides."""
     routing = ROUTING_CONFIG.get("routing", {})
     if department:
-        dept_cfg = ROUTING_CONFIG.get("department_overrides", {}).get(department, {})
-        if tool in dept_cfg:
-            return dept_cfg[tool].get("preferred", [])
+        overrides = ROUTING_CONFIG.get("department_overrides", {})
+        if department not in overrides:
+            logger.warning(json.dumps({
+                "unrecognized_department": department,
+                "tool": tool,
+                "action": "falling_back_to_global_routing",
+            }))
+        elif tool in overrides[department]:
+            return overrides[department][tool].get("preferred", [])
     return routing.get(tool, routing.get("analyze", {})).get("preferred", [])
 
 
