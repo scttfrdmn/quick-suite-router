@@ -12,15 +12,14 @@ Quick Suite → AgentCore Gateway (MCP) → API Gateway → Router Lambda
 ```
 
 You'll register the API Gateway endpoint as an AgentCore Gateway target,
-then create an MCP Actions Integration in Quick Suite that connects to
-AgentCore.
+then configure MCP Actions in Quick Suite to connect to AgentCore.
 
 ## Prerequisites
 
 - The CDK stack deployed (`cdk deploy` completed)
 - At least one provider configured (Bedrock is always available)
 - Quick Suite admin access (Author Pro or Reader Pro tier)
-- CDK output values (run `aws cloudformation describe-stacks --stack-name QuickSuiteModelRouter`)
+- CDK output values (run `aws cloudformation describe-stacks --stack-name QuickSuiteRouterStack`)
 
 ## Step 1: Note Your CDK Outputs
 
@@ -29,7 +28,7 @@ After deployment, collect these values:
 ```bash
 # All outputs at once
 aws cloudformation describe-stacks \
-  --stack-name QuickSuiteModelRouter \
+  --stack-name QuickSuiteRouterStack \
   --query "Stacks[0].Outputs[].[OutputKey,OutputValue]" \
   --output table
 ```
@@ -44,12 +43,12 @@ The Cognito Client Secret is stored in Secrets Manager. Retrieve it:
 ```bash
 # Get the client secret (needed for Quick Suite auth setup)
 USER_POOL_ID=$(aws cloudformation describe-stacks \
-  --stack-name QuickSuiteModelRouter \
+  --stack-name QuickSuiteRouterStack \
   --query "Stacks[0].Outputs[?OutputKey=='CognitoUserPoolId'].OutputValue" \
   --output text)
 
 CLIENT_ID=$(aws cloudformation describe-stacks \
-  --stack-name QuickSuiteModelRouter \
+  --stack-name QuickSuiteRouterStack \
   --query "Stacks[0].Outputs[?OutputKey=='CognitoClientId'].OutputValue" \
   --output text)
 

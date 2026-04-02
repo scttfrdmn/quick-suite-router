@@ -100,7 +100,7 @@ aws secretsmanager put-secret-value \
 
 Do this for each provider you want to enable. Bedrock requires nothing — it's always available through IAM. Providers without credentials are simply skipped in the routing chain.
 
-Then register the API Gateway endpoint as an AgentCore Gateway target, create an MCP Actions Integration in Quick Suite, and you're live. The full integration guide walks through every click.
+Then register the API Gateway endpoint as an AgentCore Gateway target, create an MCP Actions in Quick Suite, and you're live. The full integration guide walks through every click.
 
 ## The strategic play
 

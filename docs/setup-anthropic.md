@@ -28,7 +28,7 @@ existing organizational agreement.
 ```bash
 # Get the secret ARN from CDK outputs
 SECRET_ARN=$(aws cloudformation describe-stacks \
-  --stack-name QuickSuiteModelRouter \
+  --stack-name QuickSuiteRouterStack \
   --query "Stacks[0].Outputs[?OutputKey=='AnthropicSecretArn'].OutputValue" \
   --output text)
 

@@ -31,7 +31,7 @@ After deploying the stack, check that Bedrock is available:
 ```bash
 # Get the API endpoint from CDK outputs
 API_URL=$(aws cloudformation describe-stacks \
-  --stack-name QuickSuiteModelRouter \
+  --stack-name QuickSuiteRouterStack \
   --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
   --output text)
 

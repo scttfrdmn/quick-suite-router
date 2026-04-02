@@ -11,7 +11,7 @@ governance applied to every call — regardless of which provider handles it.
 │       Amazon Quick Suite        │
 │   (Chat Agents, Flows, etc.)   │
 └──────────────┬──────────────────┘
-               │ MCP Actions Integration
+               │ MCP Actions
                ▼
 ┌─────────────────────────────────┐
 │   Bedrock AgentCore Gateway     │
@@ -127,8 +127,9 @@ cdk deploy -c cache_ttl_minutes=120
 ### Authentication
 
 Cognito User Pool with OAuth 2.0 client_credentials flow. AgentCore
-Gateway authenticates using a Cognito app client. Quick Suite connects
-to AgentCore via MCP Actions Integration with the Cognito credentials.
+Gateway validates tokens using Cognito's OIDC discovery URL. Quick Suite
+connects to AgentCore via MCP Actions using Service Authentication (2LO)
+with the Cognito Client ID, Client Secret, and Token URL.
 
 The flow: Quick Suite → AgentCore Gateway → Cognito token exchange →
 API Gateway (authorized) → Router Lambda.

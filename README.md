@@ -1,226 +1,211 @@
-# Quick Suite Model Router
+# Quick Suite Router
 
-**Bring your own LLM to Amazon Quick Suite.**
+**Bring your existing AI subscriptions into Amazon Quick Suite — with full AWS governance on every call.**
 
-A CDK-deployable reference architecture that extends Quick Suite with
-multi-provider LLM access through Bedrock AgentCore Gateway. Bring your
-existing OpenAI, Anthropic, or Google Gemini credentials into Quick Suite
-with full AWS governance — Bedrock Guardrails, CloudTrail audit, and
-CloudWatch cost visibility — applied to every call regardless of provider.
+Quick Suite ships with one built-in language model. That's fine for many tasks, but
+universities and research institutions typically have existing AI agreements — an OpenAI
+site license, an Anthropic enterprise subscription, or Google AI through a Workspace
+agreement. Today, using those models means leaving Quick Suite: a separate browser tab,
+no BI integration, no workflow automation, and no centralized governance over what the
+models say.
 
-## Why
+The Router solves this by registering five task-oriented tools in Quick Suite's chat
+interface and routing each request to the best available model from any of your configured
+providers. An analyst working in Quick Suite never needs to know or choose which model
+answered — they just work. IT and compliance get a single audit trail and Bedrock
+Guardrails governance on every response, regardless of which provider generated it.
 
-Quick Suite ships with a built-in LLM that you can't change. Universities
-and enterprises often have existing AI subscriptions (OpenAI site licenses,
-Google AI Enterprise, Anthropic agreements) that represent significant
-investments. Today, using those models means leaving Quick Suite — losing
-the integrated workspace, BI, automation, and governance.
+## What Quick Suite Alone Can't Do Here
 
-The model router solves this: **your existing AI subscription becomes
-the on-ramp to Quick Suite, not a competitor to it.**
+- Prefer a specific model for a specific task type (e.g., Claude for research synthesis, GPT-4o for code generation)
+- Fall back to a secondary provider automatically when the primary is slow or unavailable
+- Apply Bedrock Guardrails governance to responses from Anthropic, OpenAI, or Gemini
+- Track token usage and cost per provider in CloudWatch
+- Route different departments to different providers (the law school prefers one model; engineering prefers another)
+- Use an existing university site license within the Quick Suite workspace
 
 ## What You Get
 
-- **Five task-oriented tools** in Quick Suite: `analyze`, `generate`,
-  `research`, `summarize`, `code`
-- **Four LLM providers**: Bedrock (Claude, Nova, Llama), Anthropic direct,
-  OpenAI direct, Google Gemini direct
-- **Smart routing**: each task type routes to the best available model
-  with automatic fallback
-- **Unified governance**: Bedrock Guardrails on every call, CloudWatch
-  usage metrics, CloudTrail audit — even for OpenAI and Gemini calls
-- **Response cache**: optional DynamoDB cache with configurable TTL
-- **One CDK command**: deploys in 15 minutes, ~$5/month infrastructure
+**Five task-oriented tools** in Quick Suite: `analyze`, `generate`, `research`, `summarize`, `code`
 
-## Quick Start
+**Four LLM providers**: Amazon Bedrock (Claude, Nova, Llama), Anthropic direct, OpenAI
+direct, Google Gemini direct — any combination, any order
 
-```bash
-git clone https://github.com/scttfrdmn/quicksuite-model-router.git
-cd quicksuite-model-router
+**Configurable routing**: set your preferred provider order per task type; the router
+tries them in order and falls back automatically on error or timeout
 
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+**Department overrides**: different departments can route to different providers — set in
+a YAML config, no code changes
 
-cp config/routing_config.example.yaml config/routing_config.yaml
+**Unified governance**: Bedrock Guardrails applied to every response regardless of which
+provider generated it; CloudWatch usage metrics per provider; CloudTrail audit
 
-cdk bootstrap   # first time only
-cdk deploy
-```
+**Response cache**: optional DynamoDB cache with configurable TTL, activated for
+low-temperature requests (temperature ≤ 0.3) to avoid re-billing the same question
 
-Then configure your providers:
-
-```bash
-# OpenAI (e.g., university site license)
-aws secretsmanager put-secret-value \
-  --secret-id quicksuite-model-router/openai \
-  --secret-string '{"api_key": "sk-...", "organization": "org-..."}'
-
-# Anthropic
-aws secretsmanager put-secret-value \
-  --secret-id quicksuite-model-router/anthropic \
-  --secret-string '{"api_key": "sk-ant-..."}'
-
-# Google Gemini
-aws secretsmanager put-secret-value \
-  --secret-id quicksuite-model-router/gemini \
-  --secret-string '{"api_key": "AIza..."}'
-```
-
-Bedrock is available immediately (IAM-based, no key needed).
-
-Connect to Quick Suite via AgentCore Gateway — see
-[Quick Suite Integration Guide](docs/quicksuite-integration.md).
+**Multi-turn conversations**: conversation history formatted correctly for each provider's
+native API (messages array for Anthropic/OpenAI, contents array with role mapping for Gemini)
 
 ## Architecture
 
 ```
-Quick Suite → AgentCore Gateway (MCP) → API Gateway → Router Lambda
-                                                          │
-                                            ┌─────────────┼─────────────┐
-                                            ▼             ▼             ▼
-                                        Bedrock       OpenAI       Gemini
-                                        (Claude,    (GPT-4o,     (Pro,
-                                         Nova,      o3, mini)    Flash)
-                                         Llama)
-                                            │             │            │
-                                            └──────┬──────┘────────────┘
-                                                   ▼
-                                          Bedrock Guardrails
-                                          CloudWatch Metrics
-                                          CloudTrail Audit
+Quick Suite conversation
+        │  MCP Actions
+        ▼
+AgentCore Gateway (OpenAPI target)
+        │
+        ▼
+API Gateway → Router Lambda
+                │
+    ┌───────────┼───────────┬──────────────┐
+    ▼           ▼           ▼              ▼
+ Bedrock     Anthropic    OpenAI        Gemini
+ (Claude,    (direct)     (direct)      (direct)
+  Nova,
+  Llama)
+    │           │           │              │
+    └───────────┴─────┬─────┴──────────────┘
+                      ▼
+             Bedrock Guardrails
+             (applied to every response)
+             CloudWatch Metrics
+             CloudTrail Audit
 ```
 
-See [Architecture](docs/architecture.md) for the full design.
+The Router is the one component that deploys behind API Gateway rather than as a direct
+Lambda target — because AgentCore Gateway's OpenAPI target type needs an HTTP endpoint.
+All other Quick Suite extensions (Data, Compute, clAWS) invoke their Lambdas directly.
 
-## Provider Setup Guides
+The Gateway ID from this stack's outputs is what the other extensions need for their
+shared-Gateway configuration (the `CLAWS_GATEWAY_ID` context variable).
 
-| Provider | Guide | Auth | Notes |
-|----------|-------|------|-------|
-| Amazon Bedrock | [Setup](docs/setup-bedrock.md) | IAM (zero config) | Claude, Nova, Llama, Mistral |
-| Anthropic | [Setup](docs/setup-anthropic.md) | API key | Direct Claude access |
-| OpenAI | [Setup](docs/setup-openai.md) | API key + org | Site license support |
-| Google Gemini | [Setup](docs/setup-gemini.md) | API key | Workspace integration |
+## Quick Start
+
+```bash
+git clone https://github.com/scttfrdmn/quick-suite-router.git
+cd quick-suite-router
+
+uv sync --extra dev --extra cdk   # or: pip install -r requirements.txt
+
+cp config/routing_config.example.yaml config/routing_config.yaml
+# Edit routing_config.yaml to set your provider preferences (see below)
+
+cdk bootstrap   # first time only, per account/region
+cdk deploy
+```
+
+Configure credentials for the providers you want to use:
+
+```bash
+# OpenAI (e.g., a university site license)
+aws secretsmanager put-secret-value \
+  --secret-id qs-router/openai \
+  --secret-string '{"api_key": "sk-...", "organization": "org-..."}'
+
+# Anthropic
+aws secretsmanager put-secret-value \
+  --secret-id qs-router/anthropic \
+  --secret-string '{"api_key": "sk-ant-..."}'
+
+# Google Gemini
+aws secretsmanager put-secret-value \
+  --secret-id qs-router/gemini \
+  --secret-string '{"api_key": "AIza..."}'
+```
+
+Bedrock is available immediately — it uses your IAM role, no API key needed.
+
+After deploying, register the API Gateway endpoint as an AgentCore Gateway OpenAPI target.
+The CDK output `GatewayEndpointUrl` is the URL to register.
 
 ## Routing Configuration
 
-Edit `config/routing_config.yaml` to control provider preference per task:
+`config/routing_config.yaml` controls which provider handles each task type and defines
+any department-specific overrides:
 
 ```yaml
 routing:
   analyze:
     preferred:
       - bedrock/anthropic.claude-sonnet-4-20250514-v1:0  # Try Bedrock first
-      - openai/gpt-4o                                     # Fallback to site license
-      - gemini/gemini-2.5-pro                              # Then Gemini
+      - openai/gpt-4o                                     # Fall back to site license
+      - gemini/gemini-2.5-pro                             # Then Gemini
   summarize:
     preferred:
-      - bedrock/amazon.nova-pro-v1:0     # Fast and cheap
-      - openai/gpt-4o-mini               # Also fast and cheap
+      - bedrock/amazon.nova-pro-v1:0   # Fast and inexpensive
+      - openai/gpt-4o-mini
+  code:
+    preferred:
+      - openai/gpt-4o
+      - bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+
+department_overrides:
+  law-school:
+    analyze:
+      preferred:
+        - bedrock/anthropic.claude-opus-4-20250514-v1:0  # More reasoning for legal analysis
+  engineering:
+    code:
+      preferred:
+        - openai/gpt-4o
 ```
 
-The router tries providers in order and automatically falls back if one
-is unavailable or returns an error. Providers without configured
-credentials are skipped.
-
-To force a single provider for everything, just put it first in every
-list. To let a university use their OpenAI site license for primary
-inference, put `openai/` first.
+Providers listed without configured credentials are silently skipped — so you can keep
+the same config file across deployments that have different credentials.
 
 ## Deployment Options
 
 ```bash
-# Standard (with response cache)
-cdk deploy
-
-# Without cache
-cdk deploy -c enable_cache=false
-
-# Custom cache TTL (2 hours)
-cdk deploy -c cache_ttl_minutes=120
-
-# Specific region
-cdk deploy -c region=us-west-2
+cdk deploy                              # standard
+cdk deploy -c enable_cache=false        # disable response cache
+cdk deploy -c cache_ttl_minutes=120     # 2-hour cache TTL (default: 60)
+cdk deploy -c region=us-west-2          # specific region
 ```
-
-## For Account Teams
-
-If you're a BD or AM working with universities and research institutions:
-
-- **[BD Playbook](gtm/bd-playbook.md)** — discovery questions, demo
-  script, competitive positioning
-- **[AM Talking Points](gtm/am-talking-points.md)** — the one-liner,
-  stakeholder-specific messaging, value chain
-- **[Objection Handling](gtm/objection-handling.md)** — "we already
-  have OpenAI" and every other objection, with responses
 
 ## Cost
 
 | Component | Monthly Cost |
 |-----------|-------------|
-| Lambda functions | ~$0.50 (at typical usage) |
-| API Gateway | ~$1-3 |
-| DynamoDB cache | ~$0.50 |
-| Secrets Manager | $1.20 (3 secrets) |
-| CloudWatch | ~$1-2 |
+| Lambda invocations | ~$0.50 |
+| API Gateway | ~$1–3 |
+| DynamoDB (response cache) | ~$0.50 |
+| Secrets Manager (3 secrets) | ~$1.20 |
+| CloudWatch | ~$1–2 |
 | **Infrastructure total** | **~$5/month** |
-| LLM tokens | Per-provider pricing (your existing spend) |
+| LLM tokens | Your existing provider spend — no markup |
 
 ## Known Limitations
 
-### No Streaming Responses
+**No streaming.** All LLM calls complete before returning. Long-form generation will
+feel slower than a streaming interface. This is a Lambda constraint; streaming support
+would require a different transport architecture.
 
-All LLM calls complete fully before returning. The router does not stream
-tokens to the client. Long-form generation (essays, code files) will have
-higher latency than a streaming interface would.
+**Guardrails apply differently by provider.** For Bedrock, guardrails block inside the
+model call before any tokens are returned. For Anthropic, OpenAI, and Gemini, guardrails
+run as a post-call check — the provider call happens first, then the output is evaluated.
+You may incur token costs from those providers even when a guardrail ultimately blocks
+the response.
 
-### Guardrails Coverage
+**Cache scope.** The DynamoDB cache only activates at `temperature ≤ 0.3`. It is not
+automatically invalidated when you rotate an API key — use `skip_cache: true` on the
+first call after a rotation.
 
-Bedrock Guardrails are applied to every call, but coverage differs by provider:
+**Single-region deployment.** For high availability across regions, deploy two stacks and
+put Route 53 latency routing in front of both API Gateway endpoints.
 
-- **Bedrock**: native guardrail integration via `guardrailConfig` in the
-  Converse API — blocks happen inside Bedrock before tokens are returned
-- **Anthropic / OpenAI / Gemini**: guardrails run as a post-call check on
-  the completed response text — the model call happens first, then the
-  output is evaluated
+**Input limits.** Prompts are capped at 100 KB. Maximum output tokens: 16,384. Router
+timeout: 30 seconds per call.
 
-The practical effect: external provider calls may incur token costs even
-when guardrails ultimately block the response.
+## Documentation
 
-### Response Cache Scope
-
-The DynamoDB cache only activates when `temperature ≤ 0.3`. Higher-temperature
-requests are never cached. The cache is also not invalidated when you rotate
-a provider's API key — use `skip_cache: true` on the first call after rotation
-to force a fresh response.
-
-### Input and Output Size Limits
-
-| Parameter | Limit |
-|-----------|-------|
-| Prompt | 100 KB |
-| Context field | 8,000 characters |
-| Max output tokens | 16,384 |
-| Router timeout | 30 seconds |
-| Provider timeout | 120 seconds |
-
-### Provider Availability Detection
-
-The router caches provider availability for 5 minutes. If you add a new
-provider secret or revoke one, expect up to 5 minutes before the router
-detects the change. The `/status` endpoint always reflects live state.
-
-### Single-Region Deployment
-
-The stack deploys to one region. There is no built-in cross-region failover.
-For HA, deploy two stacks in separate regions and add Route 53 latency
-routing in front of both API Gateway endpoints.
-
-### Per-Provider Rate Limits
-
-Each provider enforces its own rate limits independently. The router will
-fall back to the next provider on a rate-limit error, but the failed call
-still counts against that provider's quota.
+| Doc | What it covers |
+|-----|---------------|
+| [docs/architecture.md](docs/architecture.md) | Component map, Lambda internals, routing decision tree |
+| [docs/setup-bedrock.md](docs/setup-bedrock.md) | Bedrock model access and IAM setup |
+| [docs/setup-anthropic.md](docs/setup-anthropic.md) | Anthropic API key and organization ID |
+| [docs/setup-openai.md](docs/setup-openai.md) | OpenAI API key and site license configuration |
+| [docs/setup-gemini.md](docs/setup-gemini.md) | Google Gemini API key and Workspace setup |
 
 ## License
 
-Apache 2.0
+Apache-2.0 — Copyright 2026 Scott Friedman

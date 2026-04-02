@@ -51,7 +51,7 @@ If your institution manages Google AI access centrally:
 ```bash
 # Get the secret ARN
 SECRET_ARN=$(aws cloudformation describe-stacks \
-  --stack-name QuickSuiteModelRouter \
+  --stack-name QuickSuiteRouterStack \
   --query "Stacks[0].Outputs[?OutputKey=='GeminiSecretArn'].OutputValue" \
   --output text)
 

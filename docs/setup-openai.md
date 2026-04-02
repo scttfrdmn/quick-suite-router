@@ -43,7 +43,7 @@ If your institution has an OpenAI site license:
 ```bash
 # Get the secret ARN from CDK outputs
 SECRET_ARN=$(aws cloudformation describe-stacks \
-  --stack-name QuickSuiteModelRouter \
+  --stack-name QuickSuiteRouterStack \
   --query "Stacks[0].Outputs[?OutputKey=='OpenaiSecretArn'].OutputValue" \
   --output text)
 
