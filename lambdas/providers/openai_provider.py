@@ -14,7 +14,7 @@ from urllib import request as urllib_request
 from urllib.error import HTTPError
 
 import boto3
-from provider_interface import apply_guardrail
+from provider_interface import apply_guardrail_safe
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -28,6 +28,19 @@ MAX_CONTEXT_CHARS = 8_000
 _creds = None
 _creds_fetched_at = 0.0
 _KEY_TTL = 3600
+
+
+def _parse_context(context_str: str) -> list | None:
+    """Return parsed message list if context is structured JSON, else None."""
+    if not context_str:
+        return None
+    try:
+        parsed = json.loads(context_str)
+        if isinstance(parsed, list) and all("role" in m for m in parsed):
+            return parsed
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return None
 
 
 def handler(event, context):
@@ -44,17 +57,22 @@ def handler(event, context):
     if not creds or not creds.get("api_key"):
         return _err("OpenAI API key not configured")
 
+    _guardrail_ok = bool(GUARDRAIL_ID)
+
     ctx = event.get("context", "")
-    if ctx:
+    history = _parse_context(ctx) if ctx else None
+
+    if ctx and history is None:
+        # Plain-text context: size check + guardrail
         if len(ctx) > MAX_CONTEXT_CHARS:
             return _err(f"Context exceeds maximum size ({MAX_CONTEXT_CHARS} characters)")
-        ctx, ctx_blocked = apply_guardrail(ctx, GUARDRAIL_ID, GUARDRAIL_VERSION, source="INPUT")
+        ctx, ctx_blocked = apply_guardrail_safe(ctx, GUARDRAIL_ID, GUARDRAIL_VERSION, source="INPUT")
         if ctx_blocked:
             return {
                 "content": ctx,
                 "provider": "openai",
                 "model": model,
-                "guardrail_applied": True,
+                "guardrail_applied": _guardrail_ok,
                 "guardrail_blocked": True,
                 "input_tokens": 0,
                 "output_tokens": 0,
@@ -63,7 +81,7 @@ def handler(event, context):
         prompt = f"Context:\n{ctx}\n\nRequest:\n{prompt}"
 
     # Apply guardrail to input
-    prompt, input_blocked = apply_guardrail(
+    prompt, input_blocked = apply_guardrail_safe(
         prompt, GUARDRAIL_ID, GUARDRAIL_VERSION, source="INPUT"
     )
     if input_blocked:
@@ -71,17 +89,26 @@ def handler(event, context):
             "content": prompt,
             "provider": "openai",
             "model": model,
-            "guardrail_applied": True,
+            "guardrail_applied": _guardrail_ok,
             "guardrail_blocked": True,
             "input_tokens": 0,
             "output_tokens": 0,
             "metadata": {},
         }
 
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
+    # Build messages array — prepend system + history if structured context provided
+    if history is not None:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        for m in history:
+            messages.append({"role": m["role"], "content": m["content"]})
+        messages.append({"role": "user", "content": prompt})
+    else:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
 
     payload = {
         "model": model,
@@ -113,8 +140,8 @@ def handler(event, context):
             logger.warning("OpenAI response has empty or missing content")
         usage = data.get("usage", {})
 
-        # Apply guardrail to output (TODO §1)
-        content, output_blocked = apply_guardrail(
+        # Apply guardrail to output
+        content, output_blocked = apply_guardrail_safe(
             content, GUARDRAIL_ID, GUARDRAIL_VERSION, source="OUTPUT"
         )
 
@@ -124,7 +151,7 @@ def handler(event, context):
             "model": model,
             "input_tokens": usage.get("prompt_tokens", 0),
             "output_tokens": usage.get("completion_tokens", 0),
-            "guardrail_applied": bool(GUARDRAIL_ID),
+            "guardrail_applied": _guardrail_ok,
             "guardrail_blocked": output_blocked,
             "metadata": {
                 "finish_reason": choices[0].get("finish_reason", "") if choices else "",

@@ -565,6 +565,29 @@ class ModelRouterStack(Stack):
             ),
         )
 
+        dashboard.add_widgets(
+            cw.GraphWidget(
+                title="Guardrail coverage",
+                left=[
+                    cw.Metric(
+                        namespace="QuickSuiteModelRouter",
+                        metric_name="GuardrailApplied",
+                        period=Duration.hours(1),
+                        statistic="Sum",
+                        label="Applied",
+                    ),
+                    cw.Metric(
+                        namespace="QuickSuiteModelRouter",
+                        metric_name="GuardrailBlocked",
+                        period=Duration.hours(1),
+                        statistic="Sum",
+                        label="Blocked",
+                    ),
+                ],
+                width=12,
+            ),
+        )
+
         if cache_table:
             dashboard.add_widgets(
                 cw.GraphWidget(

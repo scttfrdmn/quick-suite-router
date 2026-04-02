@@ -13,7 +13,7 @@ from urllib import request as urllib_request
 from urllib.error import HTTPError
 
 import boto3
-from provider_interface import apply_guardrail
+from provider_interface import apply_guardrail_safe
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -27,6 +27,24 @@ MAX_CONTEXT_CHARS = 8_000
 _api_key = None
 _api_key_fetched_at = 0.0
 _KEY_TTL = 3600
+
+
+def _parse_context(context_str: str) -> list | None:
+    """Return parsed message list if context is structured JSON, else None."""
+    if not context_str:
+        return None
+    try:
+        parsed = json.loads(context_str)
+        if isinstance(parsed, list) and all("role" in m for m in parsed):
+            return parsed
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return None
+
+
+def _gemini_role(role: str) -> str:
+    """Map OpenAI/Anthropic role names to Gemini role names."""
+    return "model" if role == "assistant" else role
 
 
 def handler(event, context):
@@ -43,17 +61,22 @@ def handler(event, context):
     if not api_key:
         return _err("Gemini API key not configured")
 
+    _guardrail_ok = bool(GUARDRAIL_ID)
+
     ctx = event.get("context", "")
-    if ctx:
+    history = _parse_context(ctx) if ctx else None
+
+    if ctx and history is None:
+        # Plain-text context: size check + guardrail
         if len(ctx) > MAX_CONTEXT_CHARS:
             return _err(f"Context exceeds maximum size ({MAX_CONTEXT_CHARS} characters)")
-        ctx, ctx_blocked = apply_guardrail(ctx, GUARDRAIL_ID, GUARDRAIL_VERSION, source="INPUT")
+        ctx, ctx_blocked = apply_guardrail_safe(ctx, GUARDRAIL_ID, GUARDRAIL_VERSION, source="INPUT")
         if ctx_blocked:
             return {
                 "content": ctx,
                 "provider": "gemini",
                 "model": model,
-                "guardrail_applied": True,
+                "guardrail_applied": _guardrail_ok,
                 "guardrail_blocked": True,
                 "input_tokens": 0,
                 "output_tokens": 0,
@@ -62,7 +85,7 @@ def handler(event, context):
         prompt = f"Context:\n{ctx}\n\nRequest:\n{prompt}"
 
     # Apply guardrail to input
-    prompt, input_blocked = apply_guardrail(
+    prompt, input_blocked = apply_guardrail_safe(
         prompt, GUARDRAIL_ID, GUARDRAIL_VERSION, source="INPUT"
     )
     if input_blocked:
@@ -70,17 +93,27 @@ def handler(event, context):
             "content": prompt,
             "provider": "gemini",
             "model": model,
-            "guardrail_applied": True,
+            "guardrail_applied": _guardrail_ok,
             "guardrail_blocked": True,
             "input_tokens": 0,
             "output_tokens": 0,
             "metadata": {},
         }
 
+    # Build contents array — prepend history if structured context provided
+    if history is not None:
+        contents = [
+            {"role": _gemini_role(m["role"]), "parts": [{"text": m["content"]}]}
+            for m in history
+        ]
+        contents.append({"role": "user", "parts": [{"text": prompt}]})
+    else:
+        contents = [{"role": "user", "parts": [{"text": prompt}]}]
+
     url = f"{API_BASE}/{model}:generateContent"
 
     payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "contents": contents,
         "generationConfig": {
             "maxOutputTokens": max_tokens,
             "temperature": temperature,
@@ -120,8 +153,8 @@ def handler(event, context):
         usage = data.get("usageMetadata", {})
         finish = candidates[0].get("finishReason", "") if candidates else ""
 
-        # Apply guardrail to output (TODO §1)
-        content, output_blocked = apply_guardrail(
+        # Apply guardrail to output
+        content, output_blocked = apply_guardrail_safe(
             content, GUARDRAIL_ID, GUARDRAIL_VERSION, source="OUTPUT"
         )
 
@@ -131,7 +164,7 @@ def handler(event, context):
             "model": model,
             "input_tokens": usage.get("promptTokenCount", 0),
             "output_tokens": usage.get("candidatesTokenCount", 0),
-            "guardrail_applied": bool(GUARDRAIL_ID),
+            "guardrail_applied": _guardrail_ok,
             "guardrail_blocked": output_blocked or finish == "SAFETY",
             "metadata": {
                 "finish_reason": finish,
