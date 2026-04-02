@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-02
+
+### Fixed
+- CI `test` job: add `setup-node@v4` and `npm install -g aws-cdk` so `cdk synth` succeeds (CDK CLI requires Node.js)
+- `stacks/model_router_stack.py`: fix ruff I001 import-sort order
+- `stacks/multi_region_stack.py`: remove unused `hosted_zone` variable (F841)
+
 ## [0.4.0] - 2026-04-01
 
 ### Added
