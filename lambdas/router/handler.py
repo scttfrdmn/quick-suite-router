@@ -151,7 +151,7 @@ def handle_tool_invocation(event):
     # Check cache (only for deterministic-ish requests)
     _skip = body.get("skip_cache", False)
     skip_cache = (_skip.lower() in ("true", "1", "yes") if isinstance(_skip, str) else bool(_skip)) or temperature > 0.3
-    ck = cache_key(prompt, model_id, system_prompt, max_tokens, body.get("context", ""), temperature)
+    ck = cache_key(prompt, model_id, system_prompt, max_tokens, body.get("context", ""), temperature, tool)
 
     if CACHE_TABLE and not skip_cache:
         cached = cache_get(CACHE_TABLE, ck)
@@ -209,6 +209,7 @@ def handle_tool_invocation(event):
             output_tokens=payload.get("output_tokens", 0),
             latency_ms=latency,
             guardrail_blocked=payload.get("guardrail_blocked", False),
+            guardrail_applied=payload.get("guardrail_applied", False),
             cache_hit=False,
             department=department,
         )
@@ -309,6 +310,7 @@ def _fallback(tool, failed, request_payload, error_payload, department: str = ""
                         output_tokens=payload.get("output_tokens", 0),
                         latency_ms=fb_latency,
                         guardrail_blocked=payload.get("guardrail_blocked", False),
+                        guardrail_applied=payload.get("guardrail_applied", False),
                         cache_hit=False,
                         department=department,
                     )

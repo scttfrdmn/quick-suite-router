@@ -88,6 +88,53 @@ def apply_guardrail(
         return text, False
 
 
+def apply_guardrail_safe(
+    text: str,
+    guardrail_id: str,
+    guardrail_version: str = "DRAFT",
+    source: str = "INPUT",
+) -> tuple[str, bool]:
+    """
+    Fail-closed guardrail wrapper. Returns (text, blocked=True) on any exception
+    and emits a GuardrailError CloudWatch metric.
+    """
+    if not guardrail_id:
+        return text, False
+
+    try:
+        client = get_bedrock_client()
+        response = client.apply_guardrail(
+            guardrailIdentifier=guardrail_id,
+            guardrailVersion=guardrail_version,
+            source=source,
+            content=[{"text": {"text": text}}],
+        )
+        action = response.get("action", "NONE")
+        if action == "GUARDRAIL_INTERVENED":
+            outputs = response.get("outputs", [])
+            blocked_text = (
+                outputs[0]["text"] if outputs else "Content blocked by policy."
+            )
+            return blocked_text, True
+        return text, False
+
+    except Exception as exc:
+        logger.error(json.dumps({"guardrail_error": str(exc), "source": source}))
+        try:
+            get_cw_client().put_metric_data(
+                Namespace="QuickSuiteModelRouter",
+                MetricData=[{
+                    "MetricName": "GuardrailError",
+                    "Value": 1,
+                    "Unit": "Count",
+                    "Dimensions": [{"Name": "Source", "Value": source}],
+                }],
+            )
+        except Exception:
+            pass
+        return (text, True)  # fail-closed
+
+
 # ---------------------------------------------------------------------------
 # Usage metering
 # ---------------------------------------------------------------------------
@@ -99,6 +146,7 @@ def emit_usage_metrics(
     output_tokens: int = 0,
     latency_ms: int = 0,
     guardrail_blocked: bool = False,
+    guardrail_applied: bool = False,
     cache_hit: bool = False,
     department: str = "",
 ):
@@ -140,6 +188,14 @@ def emit_usage_metrics(
                 "Unit": "Count",
             })
 
+        if guardrail_applied:
+            metrics.append({
+                "MetricName": "GuardrailApplied",
+                "Dimensions": dimensions,
+                "Value": 1,
+                "Unit": "Count",
+            })
+
         if cache_hit:
             metrics.append({
                 "MetricName": "CacheHit",
@@ -169,9 +225,9 @@ def emit_usage_metrics(
 
 def cache_key(prompt: str, model: str, system_prompt: str = "",
               max_tokens: int = 4096, context: str = "",
-              temperature: float = 0.0) -> str:
+              temperature: float = 0.0, tool: str = "") -> str:
     """Generate a deterministic cache key from request parameters."""
-    raw = f"{model}|{system_prompt}|{max_tokens}|{temperature}|{context}|{prompt}"
+    raw = f"{tool}|{model}|{system_prompt}|{max_tokens}|{temperature}|{context}|{prompt}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 

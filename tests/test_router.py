@@ -22,6 +22,7 @@ os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
 import json
 import importlib
+import time
 import pytest
 from unittest.mock import patch, MagicMock, call
 
@@ -277,6 +278,23 @@ class TestCacheBehavior:
         mock_get.assert_not_called()
         mock_put.assert_not_called()
 
+    def test_cache_key_differs_by_tool(self):
+        """Same prompt and model on different tools must produce different cache keys."""
+        import provider_interface
+        key_analyze = provider_interface.cache_key("hello", "model-x", tool="analyze")
+        key_generate = provider_interface.cache_key("hello", "model-x", tool="generate")
+        key_summarize = provider_interface.cache_key("hello", "model-x", tool="summarize")
+        assert key_analyze != key_generate
+        assert key_analyze != key_summarize
+        assert key_generate != key_summarize
+
+    def test_cache_key_same_tool_is_stable(self):
+        """Same inputs always produce the same key."""
+        import provider_interface
+        k1 = provider_interface.cache_key("hello", "model-x", tool="analyze")
+        k2 = provider_interface.cache_key("hello", "model-x", tool="analyze")
+        assert k1 == k2
+
 
 # ---------------------------------------------------------------------------
 # Status endpoint
@@ -299,3 +317,120 @@ class TestStatusEndpoint:
             result = h.handle_status()
         body = json.loads(result["body"])
         assert set(body["tools"]) == {"analyze", "summarize", "code"}
+
+
+# ---------------------------------------------------------------------------
+# TestHandleToolInvocation — validation edge cases
+# ---------------------------------------------------------------------------
+
+class TestToolInvocationValidation:
+    def test_temperature_above_max_returns_400(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        event = {"tool": "analyze", "body": json.dumps({"prompt": "Hello", "temperature": 2.5})}
+        result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 400
+        assert "temperature" in json.loads(result["body"])["error"]
+
+    def test_max_tokens_above_limit_returns_400(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        event = {"tool": "analyze", "body": json.dumps({"prompt": "Hello", "max_tokens": 50000})}
+        result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 400
+        assert "max_tokens" in json.loads(result["body"])["error"]
+
+    def test_temperature_at_boundary_zero_accepted(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        success = {"content": "ok", "provider": "bedrock", "model": "m",
+                   "input_tokens": 0, "output_tokens": 0,
+                   "guardrail_applied": False, "guardrail_blocked": False}
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(success)):
+            event = {"tool": "analyze", "body": json.dumps({"prompt": "Hello", "temperature": 0.0})}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200
+
+
+# ---------------------------------------------------------------------------
+# Department overrides
+# ---------------------------------------------------------------------------
+
+class TestDepartmentOverrides:
+    def test_department_override_selects_department_preferred_provider(self, provider_functions, provider_secrets):
+        config = {
+            "routing": {
+                "analyze": {
+                    "preferred": [
+                        "bedrock/anthropic.claude-sonnet-4-20250514-v1:0",
+                        "openai/gpt-4o",
+                    ],
+                    "system_prompt": "You are an analyst.",
+                },
+            },
+            "department_overrides": {
+                "openai-only": {
+                    "analyze": {"preferred": ["openai/gpt-4o"]},
+                },
+            },
+            "defaults": {"max_tokens": 4096, "temperature": 0.7},
+        }
+        h = _load_handler(config, provider_functions, provider_secrets)
+        result = h._preferred_for("analyze", "openai-only")
+        assert result == ["openai/gpt-4o"]
+
+    def test_unknown_department_falls_back_to_default(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        result = h._preferred_for("analyze", "unknown-dept")
+        assert len(result) > 0
+        assert "bedrock" in result[0]
+
+    def test_department_override_missing_tool_falls_back(self, provider_functions, provider_secrets):
+        config = {
+            "routing": {
+                "analyze": {
+                    "preferred": ["bedrock/claude-sonnet"],
+                    "system_prompt": "...",
+                },
+            },
+            "department_overrides": {
+                "finance": {"summarize": {"preferred": ["openai/gpt-4o-mini"]}},
+            },
+            "defaults": {"max_tokens": 4096, "temperature": 0.7},
+        }
+        h = _load_handler(config, provider_functions, provider_secrets)
+        # "analyze" not overridden for "finance" → default routing
+        result = h._preferred_for("analyze", "finance")
+        assert "bedrock/claude-sonnet" in result[0]
+
+
+# ---------------------------------------------------------------------------
+# Provider availability cache
+# ---------------------------------------------------------------------------
+
+class TestGetAvailableProviders:
+    def test_cache_returns_stale_when_ttl_not_expired(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        h._available_providers = {"bedrock", "openai"}
+        h._available_providers_fetched_at = time.time()
+        with patch.object(h.secrets_client, "get_secret_value") as mock_get:
+            result = h.get_available_providers()
+        mock_get.assert_not_called()
+        assert "openai" in result
+
+    def test_cache_refreshes_after_ttl(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        h._available_providers = {"bedrock", "openai"}
+        h._available_providers_fetched_at = time.time() - 400  # beyond 300s TTL
+        with patch.object(h.secrets_client, "get_secret_value") as mock_get:
+            mock_get.return_value = {"SecretString": json.dumps({"api_key": "sk-test"})}
+            h.get_available_providers()
+        mock_get.assert_called()
+
+    def test_stale_cache_preserved_on_error(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        h._available_providers = {"bedrock", "anthropic"}
+        h._available_providers_fetched_at = time.time() - 400  # stale
+        with patch.object(h.secrets_client, "get_secret_value") as mock_get:
+            mock_get.side_effect = Exception("Secrets Manager unavailable")
+            result = h.get_available_providers()
+        # Stale cache preserved — not cleared
+        assert "anthropic" in result
