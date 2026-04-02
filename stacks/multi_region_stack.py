@@ -48,12 +48,6 @@ class MultiRegionStack(Stack):
         # e.g. https://abc123.execute-api.us-east-1.amazonaws.com/prod/
         primary_hostname = primary_api_url.replace("https://", "").split("/")[0]
 
-        hosted_zone = route53.HostedZone.from_hosted_zone_attributes(
-            self,
-            "HostedZone",
-            hosted_zone_id=hosted_zone_id,
-            zone_name=hosted_zone_name,
-        )
 
         # Route 53 health check — monitors the primary API Gateway /health endpoint
         health_check = route53.CfnHealthCheck(

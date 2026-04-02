@@ -11,12 +11,13 @@ Run integration tests:   pytest -m integration
 Run everything:          pytest
 """
 
+import importlib
+import json
 import os
 import sys
-import json
-import importlib
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")

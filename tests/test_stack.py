@@ -12,12 +12,14 @@ Verifies:
 
 import os
 import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import aws_cdk as cdk
-from aws_cdk.assertions import Template, Match
+from aws_cdk.assertions import Match, Template
+
 from stacks.model_router_stack import ModelRouterStack
 
 

@@ -2,13 +2,14 @@
 Shared fixtures for Quick Suite Model Router tests.
 """
 
-import sys
-import os
 import json
+import os
 import subprocess
+import sys
 import time
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 # Set fake AWS credentials before any boto3 import so the credential
 # provider chain doesn't try to hit real endpoints or load plugins.

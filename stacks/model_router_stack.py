@@ -42,6 +42,9 @@ from aws_cdk import (
     aws_cloudwatch as cw,
 )
 from aws_cdk import (
+    aws_cloudwatch_actions as cw_actions,
+)
+from aws_cdk import (
     aws_cognito as cognito,
 )
 from aws_cdk import (
@@ -61,9 +64,6 @@ from aws_cdk import (
 )
 from aws_cdk import (
     aws_sns as sns,
-)
-from aws_cdk import (
-    aws_cloudwatch_actions as cw_actions,
 )
 from aws_cdk import (
     aws_sns_subscriptions as sns_subs,

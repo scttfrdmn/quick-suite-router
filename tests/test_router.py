@@ -10,8 +10,8 @@ Covers:
 - Error cases: missing prompt, no providers
 """
 
-import sys
 import os
+import sys
 
 # Fake credentials must be set before any boto3 import
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
@@ -20,11 +20,10 @@ os.environ.setdefault("AWS_SECURITY_TOKEN", "testing")
 os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
-import json
 import importlib
+import json
 import time
-import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambdas", "common", "python"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambdas", "router"))
