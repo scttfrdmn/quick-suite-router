@@ -24,6 +24,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk
+
       - name: Synth CDK (validate CloudFormation)
         run: uv run cdk synth --no-asset-bundling --quiet
         env:
