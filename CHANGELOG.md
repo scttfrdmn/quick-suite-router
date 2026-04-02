@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-02
+
+### Added
+- Multi-turn conversation history: `context` field accepts a JSON list of prior messages; prepended as native messages for Anthropic/OpenAI, mapped to `contents` array with role mapping for Gemini
+- `GuardrailApplied` CloudWatch metric emitted on every `apply_guardrail` call; Guardrail Coverage widget added to CloudWatch dashboard
+
+### Fixed
+- Cache key now includes tool name, preventing cross-tool cache collisions when requests share identical prompts across different tool endpoints
+- `_preferred_for()` logs a structured JSON warning when a `department` value is not found in `department_overrides`; falls back to global routing
+- Input validation boundary tests: temperature 0–1, `max_tokens` 1–16384, prompt size ≤ 100,000 bytes
+
 ## [0.4.1] - 2026-04-02
 
 ### Fixed
@@ -59,7 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Secrets Manager integration for external provider API keys (no env-var key storage)
 - CDK stack with full infrastructure-as-code deployment (Cognito, API Gateway, Lambdas, DynamoDB, Guardrail, CloudWatch dashboard)
 
-[unreleased]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.4.0...HEAD
+[unreleased]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.4.1...v0.5.0
 [0.4.0]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/scttfrdmn/quick-suite-router/compare/v0.1.0...v0.2.0
