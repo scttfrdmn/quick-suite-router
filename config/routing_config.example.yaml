@@ -16,7 +16,7 @@ routing:
 
   analyze:
     preferred:
-      - bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+      - bedrock/us.anthropic.claude-sonnet-4-6
       - anthropic/claude-sonnet-4-20250514
       - openai/gpt-4o
       - gemini/gemini-2.5-pro
@@ -27,7 +27,7 @@ routing:
 
   generate:
     preferred:
-      - bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+      - bedrock/us.anthropic.claude-sonnet-4-6
       - openai/gpt-4o
       - gemini/gemini-2.5-pro
       - anthropic/claude-sonnet-4-20250514
@@ -37,7 +37,7 @@ routing:
 
   research:
     preferred:
-      - bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+      - bedrock/us.anthropic.claude-sonnet-4-6
       - gemini/gemini-2.5-pro
       - anthropic/claude-sonnet-4-20250514
       - openai/gpt-4o
@@ -50,14 +50,14 @@ routing:
       - bedrock/amazon.nova-pro-v1:0
       - openai/gpt-4o-mini
       - gemini/gemini-2.5-flash
-      - bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+      - bedrock/us.anthropic.claude-sonnet-4-6
     system_prompt: >
       You are a concise summarizer. Extract the most important points
       and present them clearly and briefly.
 
   code:
     preferred:
-      - bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+      - bedrock/us.anthropic.claude-sonnet-4-6
       - anthropic/claude-sonnet-4-20250514
       - openai/gpt-4o
       - gemini/gemini-2.5-pro
@@ -95,12 +95,12 @@ department_overrides:
   # Example: Bedrock-only for compliance-sensitive departments
   bedrock-only:
     analyze:
-      preferred: [bedrock/anthropic.claude-sonnet-4-20250514-v1:0]
+      preferred: [bedrock/us.anthropic.claude-sonnet-4-6]
     generate:
-      preferred: [bedrock/anthropic.claude-sonnet-4-20250514-v1:0]
+      preferred: [bedrock/us.anthropic.claude-sonnet-4-6]
     research:
-      preferred: [bedrock/anthropic.claude-sonnet-4-20250514-v1:0]
+      preferred: [bedrock/us.anthropic.claude-sonnet-4-6]
     summarize:
       preferred: [bedrock/amazon.nova-pro-v1:0]
     code:
-      preferred: [bedrock/anthropic.claude-sonnet-4-20250514-v1:0]
+      preferred: [bedrock/us.anthropic.claude-sonnet-4-6]

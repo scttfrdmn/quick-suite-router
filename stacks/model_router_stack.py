@@ -401,7 +401,10 @@ class ModelRouterStack(Stack):
                     "bedrock:InvokeModel",
                     "bedrock:InvokeModelWithResponseStream",
                 ],
-                resources=["arn:aws:bedrock:*::foundation-model/*"],
+                resources=[
+                    "arn:aws:bedrock:*::foundation-model/*",
+                    "arn:aws:bedrock:*:*:inference-profile/*",
+                ],
             )
         )
         bedrock_role.add_to_policy(
@@ -629,6 +632,7 @@ class ModelRouterStack(Stack):
             apigw.LambdaIntegration(router_fn),
             authorizer=authorizer,
             authorization_type=apigw.AuthorizationType.COGNITO,
+            authorization_scopes=["model-router/invoke"],
         )
 
         # -----------------------------------------------------------------
@@ -968,7 +972,7 @@ class ModelRouterStack(Stack):
             "routing": {
                 "analyze": {
                     "preferred": [
-                        "bedrock/anthropic.claude-sonnet-4-20250514-v1:0",
+                        "bedrock/us.anthropic.claude-sonnet-4-6",
                         "anthropic/claude-sonnet-4-20250514",
                         "openai/gpt-4o",
                         "gemini/gemini-2.5-pro",
@@ -977,7 +981,7 @@ class ModelRouterStack(Stack):
                 },
                 "generate": {
                     "preferred": [
-                        "bedrock/anthropic.claude-sonnet-4-20250514-v1:0",
+                        "bedrock/us.anthropic.claude-sonnet-4-6",
                         "openai/gpt-4o",
                         "gemini/gemini-2.5-pro",
                     ],
@@ -985,7 +989,7 @@ class ModelRouterStack(Stack):
                 },
                 "research": {
                     "preferred": [
-                        "bedrock/anthropic.claude-sonnet-4-20250514-v1:0",
+                        "bedrock/us.anthropic.claude-sonnet-4-6",
                         "gemini/gemini-2.5-pro",
                         "openai/gpt-4o",
                     ],
@@ -1001,7 +1005,7 @@ class ModelRouterStack(Stack):
                 },
                 "code": {
                     "preferred": [
-                        "bedrock/anthropic.claude-sonnet-4-20250514-v1:0",
+                        "bedrock/us.anthropic.claude-sonnet-4-6",
                         "anthropic/claude-sonnet-4-20250514",
                         "openai/gpt-4o",
                     ],
