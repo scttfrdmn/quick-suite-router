@@ -16,6 +16,7 @@
     "@aws-cdk/core:checkSecretUsage": true,
     "@aws-cdk/core:target-partitions": ["aws"],
     "enable_cache": true,
-    "cache_ttl_minutes": 60
+    "cache_ttl_minutes": 60,
+    "enable_vpc": false
   }
 }

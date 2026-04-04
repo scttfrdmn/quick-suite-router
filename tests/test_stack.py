@@ -44,19 +44,19 @@ def test_synth_succeeds(default_stack):
 
 
 def test_cache_table_present_by_default(default_stack):
-    """DynamoDB table exists when enable_cache is true (default)."""
-    default_stack.resource_count_is("AWS::DynamoDB::Table", 1)
+    """DynamoDB table exists when enable_cache is true (default): cache + spend ledger."""
+    default_stack.resource_count_is("AWS::DynamoDB::Table", 2)
 
 
 def test_cache_table_absent_when_disabled(no_cache_stack):
-    """DynamoDB table is NOT created when enable_cache=false."""
-    no_cache_stack.resource_count_is("AWS::DynamoDB::Table", 0)
+    """DynamoDB table: cache absent when disabled, spend ledger always present."""
+    no_cache_stack.resource_count_is("AWS::DynamoDB::Table", 1)
 
 
 def test_all_provider_lambdas_present(default_stack):
-    """Router + 4 providers = 5 app Lambdas. CDK log-retention creates one more."""
-    # 5 application Lambdas + 1 CDK-managed log retention custom resource Lambda
-    default_stack.resource_count_is("AWS::Lambda::Function", 6)
+    """Router + 4 providers + query-spend = 6 app Lambdas. CDK log-retention adds one more."""
+    # 6 application Lambdas + 1 CDK-managed log retention custom resource Lambda
+    default_stack.resource_count_is("AWS::Lambda::Function", 7)
 
 
 def test_provider_lambda_names(default_stack):
