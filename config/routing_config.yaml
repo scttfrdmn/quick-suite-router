@@ -65,6 +65,17 @@ routing:
       You are an expert software engineer. Write clean, correct,
       well-documented code. Explain design decisions.
 
+  extract:
+    preferred:
+      - bedrock/us.anthropic.claude-sonnet-4-6
+      - anthropic/claude-sonnet-4-6
+      - openai/gpt-4o
+      - gemini/gemini-2.5-pro
+    system_prompt: >
+      You are a structured data extraction specialist. Extract exactly
+      the requested fields from the provided text as valid JSON. Never
+      hallucinate values not present in the source text.
+
 defaults:
   max_tokens: 4096
   temperature: 0.7

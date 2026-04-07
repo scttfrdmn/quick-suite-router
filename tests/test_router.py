@@ -1160,3 +1160,223 @@ class TestPerUserRateLimitingAuthorizer:
         }
         with _pytest.raises(Exception, match="Unauthorized"):
             mod.handler(event, None)
+
+
+# ---------------------------------------------------------------------------
+# Extract tool (#38, #39)
+# ---------------------------------------------------------------------------
+
+def _extract_routing_config():
+    """Routing config with extract tool and structured_output capability."""
+    return {
+        "routing": {
+            "extract": {
+                "preferred": ["bedrock/anthropic.claude-sonnet-4-20250514-v1:0", "openai/gpt-4o"],
+                "system_prompt": "You are a structured data extraction specialist.",
+            },
+            "analyze": {
+                "preferred": ["bedrock/anthropic.claude-sonnet-4-20250514-v1:0"],
+                "system_prompt": "You are an expert analyst.",
+            },
+        },
+        "defaults": {"max_tokens": 4096, "temperature": 0.7},
+        "model_capabilities": {
+            "bedrock/anthropic.claude-sonnet-4-20250514-v1:0": ["structured_output"],
+            "openai/gpt-4o": ["structured_output"],
+        },
+        "model_context_windows": {
+            "bedrock/anthropic.claude-sonnet-4-20250514-v1:0": 200000,
+            "openai/gpt-4o": 128000,
+        },
+    }
+
+
+class TestExtractTool:
+    def test_happy_path_returns_extracted_fields(self, provider_functions, provider_secrets):
+        cfg = _extract_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        provider_resp = {
+            "content": '{"effect_sizes": [{"measure": "d", "value": 0.5}]}',
+            "extracted_fields": {"effect_sizes": [{"measure": "d", "value": 0.5}]},
+            "provider": "bedrock",
+            "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+            "input_tokens": 200, "output_tokens": 80,
+            "guardrail_applied": False, "guardrail_blocked": False,
+        }
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(provider_resp)), \
+             patch.object(h, "spend_record_write"):
+            event = {"tool": "extract", "body": json.dumps({
+                "prompt": "Extract from this paper.",
+                "extraction_types": ["effect_sizes"],
+            })}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert "extracted_fields" in body
+        assert body["extracted_fields"]["effect_sizes"][0]["measure"] == "d"
+
+    def test_missing_extraction_types_returns_400(self, provider_functions, provider_secrets):
+        cfg = _extract_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        with patch.object(h, "_available_providers", {"bedrock"}):
+            event = {"tool": "extract", "body": json.dumps({"prompt": "Extract something."})}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 400
+        body = json.loads(result["body"])
+        assert "extraction_types" in body["error"]
+
+    def test_structured_output_capability_required(self, provider_functions, provider_secrets):
+        cfg = {
+            "routing": {
+                "extract": {"preferred": ["openai/gpt-3.5-turbo"], "system_prompt": "extract"},
+                "analyze": {"preferred": ["openai/gpt-3.5-turbo"], "system_prompt": "analyze"},
+            },
+            "defaults": {"max_tokens": 4096, "temperature": 0.7},
+            "model_capabilities": {"openai/gpt-3.5-turbo": []},  # no structured_output
+            "model_context_windows": {"openai/gpt-3.5-turbo": 16000},
+        }
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        with patch.object(h, "_available_providers", {"openai"}):
+            event = {"tool": "extract", "body": json.dumps({
+                "prompt": "Extract this.", "extraction_types": ["citations"],
+            })}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 400
+        body = json.loads(result["body"])
+        assert body["code"] == "unsatisfiable_capabilities"
+
+    def test_open_problems_store_at_uri_writes_s3(self, provider_functions, provider_secrets):
+        cfg = _extract_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        open_problems_data = [{"gap_statement": "Mechanism unknown", "domain": "biology", "confidence": 0.9}]
+        provider_resp = {
+            "content": json.dumps({"open_problems": open_problems_data}),
+            "extracted_fields": {"open_problems": open_problems_data},
+            "provider": "bedrock",
+            "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+            "input_tokens": 200, "output_tokens": 80,
+            "guardrail_applied": False, "guardrail_blocked": False,
+        }
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(provider_resp)), \
+             patch.object(h, "spend_record_write"), \
+             patch("boto3.client") as mock_boto3:
+            mock_s3 = MagicMock()
+            mock_boto3.return_value = mock_s3
+            event = {"tool": "extract", "body": json.dumps({
+                "prompt": "Extract gaps.",
+                "extraction_types": ["open_problems"],
+                "store_at_uri": "s3://my-bucket/gaps/problems.json",
+            })}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert body.get("stored_at_uri") == "s3://my-bucket/gaps/problems.json"
+
+    def test_open_problems_type_extraction(self, provider_functions, provider_secrets):
+        cfg = _extract_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        provider_resp = {
+            "content": json.dumps({"open_problems": [{"gap_statement": "X is unknown", "domain": "physics", "confidence": 0.8}]}),
+            "extracted_fields": {"open_problems": [{"gap_statement": "X is unknown", "domain": "physics", "confidence": 0.8}]},
+            "provider": "bedrock",
+            "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+            "input_tokens": 150, "output_tokens": 60,
+            "guardrail_applied": False, "guardrail_blocked": False,
+        }
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(provider_resp)), \
+             patch.object(h, "spend_record_write"):
+            event = {"tool": "extract", "body": json.dumps({
+                "prompt": "Find open problems.",
+                "extraction_types": ["open_problems"],
+            })}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        gaps = body["extracted_fields"]["open_problems"]
+        assert len(gaps) == 1
+        assert "gap_statement" in gaps[0]
+
+
+# ---------------------------------------------------------------------------
+# Grounding mode strict (#40)
+# ---------------------------------------------------------------------------
+
+class TestGroundingModeStrict:
+    def test_strict_mode_response_includes_grounding_fields(self, provider_functions, provider_secrets):
+        cfg = {
+            "routing": {
+                "research": {
+                    "preferred": ["bedrock/anthropic.claude-sonnet-4-20250514-v1:0"],
+                    "system_prompt": "You are a research assistant.",
+                },
+                "analyze": {"preferred": ["bedrock/anthropic.claude-sonnet-4-20250514-v1:0"], "system_prompt": ""},
+            },
+            "defaults": {"max_tokens": 4096, "temperature": 0.7},
+            "model_capabilities": {"bedrock/anthropic.claude-sonnet-4-20250514-v1:0": []},
+            "model_context_windows": {"bedrock/anthropic.claude-sonnet-4-20250514-v1:0": 200000},
+        }
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        provider_resp = {
+            "content": "This paper claims X [source: p.3].",
+            "sources_used": ["Section 2", "p.3"],
+            "grounding_coverage": 0.85,
+            "low_confidence_claims": [],
+            "provider": "bedrock",
+            "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+            "input_tokens": 300, "output_tokens": 120,
+            "guardrail_applied": False, "guardrail_blocked": False,
+        }
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(provider_resp)), \
+             patch.object(h, "spend_record_write"):
+            event = {"tool": "research", "body": json.dumps({
+                "prompt": "Summarize this paper.",
+                "grounding_mode": "strict",
+            })}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert "sources_used" in body
+        assert "grounding_coverage" in body
+        assert "low_confidence_claims" in body
+        assert body["grounding_coverage"] == 0.85
+
+    def test_default_mode_omits_grounding_fields(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        provider_resp = {
+            "content": "Research result.",
+            "provider": "bedrock",
+            "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+            "input_tokens": 100, "output_tokens": 50,
+            "guardrail_applied": False, "guardrail_blocked": False,
+        }
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(provider_resp)), \
+             patch.object(h, "spend_record_write"):
+            event = {"tool": "analyze", "body": json.dumps({"prompt": "Analyze this."})}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert "sources_used" not in body
+        assert "grounding_coverage" not in body
+
+    def test_invalid_grounding_mode_treated_as_default(self, routing_config, provider_functions, provider_secrets):
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        provider_resp = {
+            "content": "Result.",
+            "provider": "bedrock",
+            "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+            "input_tokens": 100, "output_tokens": 50,
+            "guardrail_applied": False, "guardrail_blocked": False,
+        }
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(provider_resp)), \
+             patch.object(h, "spend_record_write"):
+            event = {"tool": "analyze", "body": json.dumps({
+                "prompt": "Hello.", "grounding_mode": "invalid_mode",
+            })}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200

@@ -264,6 +264,22 @@ def handle_tool_invocation(event):
     if isinstance(required_capabilities, str):
         required_capabilities = [required_capabilities]
 
+    # Extract tool: validate extraction_types and require structured_output capability
+    extraction_types = []
+    if tool == "extract":
+        extraction_types = body.get("extraction_types") or []
+        if isinstance(extraction_types, str):
+            extraction_types = [extraction_types]
+        if not extraction_types:
+            return _resp(400, {"error": "extraction_types is required for the extract tool"})
+        if "structured_output" not in required_capabilities:
+            required_capabilities = list(required_capabilities) + ["structured_output"]
+
+    # Grounding mode: strict adds citation + confidence annotations to research responses
+    grounding_mode = str(body.get("grounding_mode") or "default").strip().lower()
+    if grounding_mode not in ("default", "strict"):
+        grounding_mode = "default"
+
     # Context budget estimate (tokens): prompt + system + context + max_tokens output
     context_budget = (
         estimate_tokens(prompt)
@@ -332,6 +348,8 @@ def handle_tool_invocation(event):
         "tool_name": tool,
         "context": body.get("context", ""),
         "stream": stream,
+        "extraction_types": extraction_types,
+        "grounding_mode": grounding_mode,
     }
 
     # Invoke provider
@@ -363,6 +381,26 @@ def handle_tool_invocation(event):
         payload["latency_ms"] = latency
         payload["cached"] = False
         payload["tokens_in_estimate"] = context_budget
+
+        # Extract tool: parsed extracted_fields already set by provider; handle store_at_uri
+        if tool == "extract" and not payload.get("error") and not payload.get("guardrail_blocked"):
+            store_at_uri = str(body.get("store_at_uri") or "").strip()
+            if store_at_uri and "open_problems" in extraction_types:
+                open_problems = payload.get("extracted_fields", {}).get("open_problems", [])
+                if open_problems and store_at_uri.startswith("s3://"):
+                    try:
+                        parts = store_at_uri[5:].split("/", 1)
+                        s3_bucket = parts[0]
+                        s3_key = parts[1] if len(parts) > 1 else "open_problems.json"
+                        boto3.client("s3").put_object(
+                            Bucket=s3_bucket,
+                            Key=s3_key,
+                            Body=json.dumps(open_problems).encode("utf-8"),
+                            ContentType="application/json",
+                        )
+                        payload["stored_at_uri"] = store_at_uri
+                    except Exception as _store_err:
+                        logger.warning(f"store_at_uri write failed: {_store_err}")
 
         # Emit metrics
         emit_usage_metrics(

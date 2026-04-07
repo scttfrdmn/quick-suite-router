@@ -19,6 +19,7 @@ Streaming note (v0.6.0):
 import json
 import logging
 import os
+import re
 import time
 from urllib import request as urllib_request
 from urllib.error import HTTPError
@@ -92,6 +93,51 @@ def _parse_context(context_str: str) -> list | None:
     return validated if validated else None
 
 
+def _build_extraction_directive(extraction_types: list) -> str:
+    types_str = ", ".join(f'"{t}"' for t in extraction_types)
+    directive = (
+        f"Return a JSON object with exactly these top-level keys: {types_str}. "
+        "Extract ONLY values explicitly present in the source text. "
+        "Do not invent or infer values not stated in the text."
+    )
+    if "open_problems" in extraction_types:
+        directive += (
+            ' For "open_problems": extract statements of unresolved questions, '
+            'gaps, or future work as a list of objects each with keys '
+            '"gap_statement" (string), "domain" (string), "confidence" (float 0.0-1.0).'
+        )
+    return directive
+
+
+def _parse_grounding_block(content: str) -> tuple:
+    m = re.search(r"```json\s*(\{.*?\})\s*```", content, re.DOTALL)
+    if m:
+        try:
+            meta = json.loads(m.group(1))
+            cleaned = content[: m.start()].rstrip()
+            return cleaned, {
+                "sources_used": meta.get("sources_used", []),
+                "grounding_coverage": float(meta.get("grounding_coverage", 0.0)),
+                "low_confidence_claims": meta.get("low_confidence_claims", []),
+            }
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            pass
+    return content, {"sources_used": [], "grounding_coverage": 0.0, "low_confidence_claims": []}
+
+
+def _parse_extracted_fields(content: str) -> dict:
+    try:
+        return json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        m = re.search(r"\{.*\}", content, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group())
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return {}
+
+
 def handler(event, context):
     model = event.get("model", "claude-sonnet-4-20250514")
     prompt = event.get("prompt", "")
@@ -99,9 +145,27 @@ def handler(event, context):
     max_tokens = event.get("max_tokens", 4096)
     temperature = event.get("temperature", 0.7)
     stream = bool(event.get("stream", False))
+    tool_name = event.get("tool_name", "")
+    extraction_types = event.get("extraction_types") or []
+    grounding_mode = event.get("grounding_mode", "default")
 
     if not prompt:
         return _err("No prompt provided")
+
+    # Inject extraction directive for extract tool
+    if tool_name == "extract" and extraction_types:
+        directive = _build_extraction_directive(extraction_types)
+        system_prompt = directive + ("\n\n" + system_prompt if system_prompt else "")
+
+    # Inject grounding directive for strict research
+    if tool_name == "research" and grounding_mode == "strict":
+        grounding_directive = (
+            "Cite the specific passages that support each claim. "
+            "For any claim you cannot ground in the provided text, prefix it with [LOW CONFIDENCE]. "
+            "At the end of your response, include a JSON block (nothing after it):\n"
+            '```json\n{"sources_used": [...], "grounding_coverage": 0.0, "low_confidence_claims": [...]}\n```'
+        )
+        system_prompt = grounding_directive + ("\n\n" + system_prompt if system_prompt else "")
 
     api_key = _get_key()
     if not api_key:
@@ -169,8 +233,19 @@ def handler(event, context):
     }
 
     if stream:
-        return _invoke_streaming(payload, headers, model, _guardrail_ok)
-    return _invoke_blocking(payload, headers, model, _guardrail_ok)
+        result = _invoke_streaming(payload, headers, model, _guardrail_ok)
+    else:
+        result = _invoke_blocking(payload, headers, model, _guardrail_ok)
+
+    if not result.get("error") and not result.get("guardrail_blocked"):
+        if tool_name == "extract" and extraction_types:
+            result["extracted_fields"] = _parse_extracted_fields(result.get("content", ""))
+        elif tool_name == "research" and grounding_mode == "strict":
+            cleaned, grounding_meta = _parse_grounding_block(result.get("content", ""))
+            result["content"] = cleaned
+            result.update(grounding_meta)
+
+    return result
 
 
 def _invoke_blocking(payload, headers, model, guardrail_ok):
