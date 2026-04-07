@@ -1,0 +1,104 @@
+# Quick Suite Model Router — Routing Configuration
+#
+# Controls which LLM provider handles each tool type.
+# The router tries providers in order and falls back if unavailable.
+#
+# Format: provider/model_id
+#   bedrock/    — Bedrock Converse API (IAM, no extra credentials)
+#   anthropic/  — Anthropic Messages API (requires API key)
+#   openai/     — OpenAI Chat Completions API (requires API key)
+#   gemini/     — Google Generative AI API (requires API key)
+#
+# Claude 4.x on-demand requires cross-region inference profiles (us.* prefix).
+# Updated for April 2026: Sonnet 4.6 and Haiku 4.5 as primary Bedrock models.
+
+routing:
+
+  analyze:
+    preferred:
+      - bedrock/us.anthropic.claude-sonnet-4-6
+      - anthropic/claude-sonnet-4-6
+      - openai/gpt-4o
+      - gemini/gemini-2.5-pro
+    system_prompt: >
+      You are an expert analyst. Provide thorough, well-structured
+      analysis with clear reasoning. Break complex topics into
+      components. Identify assumptions and confidence levels.
+
+  generate:
+    preferred:
+      - bedrock/us.anthropic.claude-sonnet-4-6
+      - openai/gpt-4o
+      - gemini/gemini-2.5-pro
+      - anthropic/claude-sonnet-4-6
+    system_prompt: >
+      You are a skilled content creator. Generate high-quality,
+      well-structured content appropriate for a professional audience.
+
+  research:
+    preferred:
+      - bedrock/us.anthropic.claude-sonnet-4-6
+      - gemini/gemini-2.5-pro
+      - anthropic/claude-sonnet-4-6
+      - openai/gpt-4o
+    system_prompt: >
+      You are a research assistant. Synthesize information thoroughly,
+      present multiple perspectives, and identify gaps or uncertainties.
+
+  summarize:
+    preferred:
+      - bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
+      - bedrock/amazon.nova-pro-v1:0
+      - openai/gpt-4o-mini
+      - gemini/gemini-2.5-flash
+    system_prompt: >
+      You are a concise summarizer. Extract the most important points
+      and present them clearly and briefly.
+
+  code:
+    preferred:
+      - bedrock/us.anthropic.claude-sonnet-4-6
+      - anthropic/claude-sonnet-4-6
+      - openai/gpt-4o
+      - gemini/gemini-2.5-pro
+    system_prompt: >
+      You are an expert software engineer. Write clean, correct,
+      well-documented code. Explain design decisions.
+
+defaults:
+  max_tokens: 4096
+  temperature: 0.7
+
+model_capabilities:
+  bedrock/us.anthropic.claude-sonnet-4-6: [vision, long_context, function_calling, structured_output]
+  anthropic/claude-sonnet-4-6: [vision, long_context, function_calling, structured_output]
+  openai/gpt-4o: [vision, function_calling, structured_output]
+  gemini/gemini-2.5-pro: [vision, long_context, function_calling, structured_output]
+  bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0: [function_calling, structured_output]
+  bedrock/amazon.nova-pro-v1:0: [vision, function_calling, structured_output]
+  openai/gpt-4o-mini: [function_calling, structured_output]
+  gemini/gemini-2.5-flash: [function_calling, structured_output]
+
+model_context_windows:
+  bedrock/us.anthropic.claude-sonnet-4-6: 200000
+  anthropic/claude-sonnet-4-6: 200000
+  openai/gpt-4o: 128000
+  gemini/gemini-2.5-pro: 1000000
+  bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0: 200000
+  bedrock/amazon.nova-pro-v1:0: 300000
+  openai/gpt-4o-mini: 128000
+  gemini/gemini-2.5-flash: 1000000
+
+department_overrides:
+
+  bedrock-only:
+    analyze:
+      preferred: [bedrock/us.anthropic.claude-sonnet-4-6]
+    generate:
+      preferred: [bedrock/us.anthropic.claude-sonnet-4-6]
+    research:
+      preferred: [bedrock/us.anthropic.claude-sonnet-4-6]
+    summarize:
+      preferred: [bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0]
+    code:
+      preferred: [bedrock/us.anthropic.claude-sonnet-4-6]

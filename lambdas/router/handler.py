@@ -259,9 +259,38 @@ def handle_tool_invocation(event):
     data_classification = str(body.get("data_classification") or "").strip().lower()
     phi_mode = data_classification == "phi"
 
+    # Capability requirements
+    required_capabilities = body.get("capabilities") or []
+    if isinstance(required_capabilities, str):
+        required_capabilities = [required_capabilities]
+
+    # Context budget estimate (tokens): prompt + system + context + max_tokens output
+    context_budget = (
+        estimate_tokens(prompt)
+        + estimate_tokens(system_prompt or "")
+        + estimate_tokens(str(body.get("context") or ""))
+        + max_tokens
+    )
+
     # Select provider
-    provider_key, model_id = select_provider(tool, body.get("provider"), department, phi_mode=phi_mode)
+    provider_key, model_id, skip_reason = select_provider(
+        tool, body.get("provider"), department,
+        phi_mode=phi_mode,
+        required_capabilities=required_capabilities,
+        context_budget=context_budget,
+    )
     if not provider_key:
+        if skip_reason == "context_limit_exceeded":
+            return _resp(400, {
+                "error": "Input exceeds context window of all available providers",
+                "code": "context_limit_exceeded",
+                "tokens_in_estimate": context_budget,
+            })
+        if skip_reason == "unsatisfiable_capabilities":
+            return _resp(400, {
+                "error": f"No providers support required capabilities: {required_capabilities}",
+                "code": "unsatisfiable_capabilities",
+            })
         return _resp(503, {"error": "No providers available", "tool": tool})
 
     # Check cache (only for deterministic-ish requests)
@@ -313,10 +342,16 @@ def handle_tool_invocation(event):
 
         if "errorMessage" in payload or payload.get("error"):
             logger.error(f"Provider error: {payload.get('errorMessage') or payload.get('error')}")
-            return _fallback(tool, provider_key, request_payload, payload, department, phi_mode=phi_mode)
+            return _fallback(
+                tool, provider_key, request_payload, payload, department,
+                phi_mode=phi_mode,
+                required_capabilities=required_capabilities,
+                context_budget=context_budget,
+            )
 
         payload["latency_ms"] = latency
         payload["cached"] = False
+        payload["tokens_in_estimate"] = context_budget
 
         # Emit metrics
         emit_usage_metrics(
@@ -378,7 +413,10 @@ def handle_tool_invocation(event):
     except Exception as e:
         logger.error(f"Failed to invoke {provider_key}: {e}")
         return _fallback(
-            tool, provider_key, request_payload, {"error": str(e)}, department, phi_mode=phi_mode
+            tool, provider_key, request_payload, {"error": str(e)}, department,
+            phi_mode=phi_mode,
+            required_capabilities=required_capabilities,
+            context_budget=context_budget,
         )
 
 
@@ -405,9 +443,32 @@ def _preferred_for(tool: str, department: str = "") -> list:
 _NON_BEDROCK_PROVIDERS = {"anthropic", "openai", "gemini"}
 
 
-def select_provider(tool: str, explicit: str = None, department: str = "", phi_mode: bool = False) -> tuple:
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate: 1 token ≈ 4 characters."""
+    return max(1, len(text) // 4)
+
+
+def _get_model_caps(provider_key: str, model_id: str) -> list:
+    caps = ROUTING_CONFIG.get("model_capabilities", {})
+    return caps.get(f"{provider_key}/{model_id}", [])
+
+
+def _get_context_window(provider_key: str, model_id: str) -> int:
+    windows = ROUTING_CONFIG.get("model_context_windows", {})
+    return windows.get(f"{provider_key}/{model_id}", 0)
+
+
+def select_provider(
+    tool: str,
+    explicit: str = None,
+    department: str = "",
+    phi_mode: bool = False,
+    required_capabilities: list | None = None,
+    context_budget: int = 0,
+) -> tuple:
     available = get_available_providers()
     preferred = _preferred_for(tool, department)
+    required_capabilities = required_capabilities or []
 
     # PHI mode: silently restrict candidate set to Bedrock only
     if phi_mode:
@@ -415,18 +476,40 @@ def select_provider(tool: str, explicit: str = None, department: str = "", phi_m
         if explicit and explicit in _NON_BEDROCK_PROVIDERS:
             explicit = None  # ignore explicit non-Bedrock request silently
 
+    skip_reason = ""
+
     if explicit:
         for entry in preferred:
             pk = entry.split("/")[0]
             if pk == explicit and pk in available:
                 mid = entry.split("/", 1)[1] if "/" in entry else ""
-                return pk, mid
+                caps = _get_model_caps(pk, mid)
+                if required_capabilities and not all(c in caps for c in required_capabilities):
+                    skip_reason = "unsatisfiable_capabilities"
+                    continue
+                win = _get_context_window(pk, mid)
+                if context_budget > 0 and win > 0 and context_budget > win:
+                    skip_reason = "context_limit_exceeded"
+                    continue
+                return pk, mid, ""
 
     for entry in preferred:
         pk = entry.split("/")[0]
         mid = entry.split("/", 1)[1] if "/" in entry else ""
-        if pk in available:
-            return pk, mid
+        if pk not in available:
+            continue
+        if required_capabilities:
+            caps = _get_model_caps(pk, mid)
+            if not all(c in caps for c in required_capabilities):
+                if not skip_reason:
+                    skip_reason = "unsatisfiable_capabilities"
+                continue
+        win = _get_context_window(pk, mid)
+        if context_budget > 0 and win > 0 and context_budget > win:
+            if skip_reason != "unsatisfiable_capabilities":
+                skip_reason = "context_limit_exceeded"
+            continue
+        return pk, mid, ""
 
     logger.warning(json.dumps({
         "select_provider_exhausted": True,
@@ -434,11 +517,22 @@ def select_provider(tool: str, explicit: str = None, department: str = "", phi_m
         "department": department,
         "available": list(available),
         "preferred": preferred,
+        "skip_reason": skip_reason,
     }))
-    return None, None
+    return None, None, skip_reason
 
 
-def _fallback(tool, failed, request_payload, error_payload, department: str = "", phi_mode: bool = False):
+def _fallback(
+    tool,
+    failed,
+    request_payload,
+    error_payload,
+    department: str = "",
+    phi_mode: bool = False,
+    required_capabilities: list | None = None,
+    context_budget: int = 0,
+):
+    required_capabilities = required_capabilities or []
     preferred = _preferred_for(tool, department)
     if phi_mode:
         preferred = [e for e in preferred if e.split("/")[0] not in _NON_BEDROCK_PROVIDERS]
@@ -453,42 +547,52 @@ def _fallback(tool, failed, request_payload, error_payload, department: str = ""
             past_failed = True
             continue
 
-        if past_failed and pk in available:
-            fn_arn = PROVIDER_FUNCTIONS.get(pk)
-            if not fn_arn:
+        if not past_failed or pk not in available:
+            continue
+
+        if required_capabilities:
+            caps = _get_model_caps(pk, mid)
+            if not all(c in caps for c in required_capabilities):
                 continue
-            try:
-                logger.info(f"Falling back → {pk}/{mid}")
-                _emit_event("FallbackInvoked", tool, failed)
-                request_payload["model"] = mid
-                fb_start = time.time()
-                resp = lambda_client.invoke(
-                    FunctionName=fn_arn,
-                    InvocationType="RequestResponse",
-                    Payload=json.dumps(request_payload),
+        win = _get_context_window(pk, mid)
+        if context_budget > 0 and win > 0 and context_budget > win:
+            continue
+
+        fn_arn = PROVIDER_FUNCTIONS.get(pk)
+        if not fn_arn:
+            continue
+        try:
+            logger.info(f"Falling back → {pk}/{mid}")
+            _emit_event("FallbackInvoked", tool, failed)
+            request_payload["model"] = mid
+            fb_start = time.time()
+            resp = lambda_client.invoke(
+                FunctionName=fn_arn,
+                InvocationType="RequestResponse",
+                Payload=json.dumps(request_payload),
+            )
+            payload = json.loads(resp["Payload"].read())
+            fb_latency = int((time.time() - fb_start) * 1000)
+            if "errorMessage" not in payload and not payload.get("error"):
+                payload["latency_ms"] = fb_latency
+                payload["_fallback"] = {
+                    "original_provider": failed,
+                    "reason": str(error_payload.get("error", "unknown")),
+                }
+                emit_usage_metrics(
+                    provider=payload.get("provider", pk),
+                    model=payload.get("model", mid),
+                    input_tokens=payload.get("input_tokens", 0),
+                    output_tokens=payload.get("output_tokens", 0),
+                    latency_ms=fb_latency,
+                    guardrail_blocked=payload.get("guardrail_blocked", False),
+                    guardrail_applied=payload.get("guardrail_applied", False),
+                    cache_hit=False,
+                    department=department,
                 )
-                payload = json.loads(resp["Payload"].read())
-                fb_latency = int((time.time() - fb_start) * 1000)
-                if "errorMessage" not in payload and not payload.get("error"):
-                    payload["latency_ms"] = fb_latency
-                    payload["_fallback"] = {
-                        "original_provider": failed,
-                        "reason": str(error_payload.get("error", "unknown")),
-                    }
-                    emit_usage_metrics(
-                        provider=payload.get("provider", pk),
-                        model=payload.get("model", mid),
-                        input_tokens=payload.get("input_tokens", 0),
-                        output_tokens=payload.get("output_tokens", 0),
-                        latency_ms=fb_latency,
-                        guardrail_blocked=payload.get("guardrail_blocked", False),
-                        guardrail_applied=payload.get("guardrail_applied", False),
-                        cache_hit=False,
-                        department=department,
-                    )
-                    return _resp(200, payload)
-            except Exception as e:
-                logger.error(f"Fallback to {pk} also failed: {e}")
+                return _resp(200, payload)
+        except Exception as e:
+            logger.error(f"Fallback to {pk} also failed: {e}")
 
     _emit_event("AllProvidersFailed", tool)
     last_error_msg = (

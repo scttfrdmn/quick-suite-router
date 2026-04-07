@@ -63,40 +63,40 @@ class TestSelectProvider:
     def test_prefers_first_available(self, routing_config, provider_functions, provider_secrets):
         h = _load_handler(routing_config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", {"bedrock", "anthropic", "openai"}):
-            provider, model = h.select_provider("analyze")
+            provider, model, _ = h.select_provider("analyze")
         assert provider == "bedrock"
         assert "claude-sonnet" in model
 
     def test_skips_unavailable_falls_to_second(self, routing_config, provider_functions, provider_secrets):
         h = _load_handler(routing_config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", {"anthropic", "openai"}):
-            provider, model = h.select_provider("analyze")
+            provider, model, _ = h.select_provider("analyze")
         assert provider == "anthropic"
 
     def test_explicit_override_selects_requested_provider(self, routing_config, provider_functions, provider_secrets):
         h = _load_handler(routing_config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", {"bedrock", "openai"}):
-            provider, model = h.select_provider("analyze", explicit="openai")
+            provider, model, _ = h.select_provider("analyze", explicit="openai")
         assert provider == "openai"
 
     def test_explicit_override_ignored_if_unavailable(self, routing_config, provider_functions, provider_secrets):
         h = _load_handler(routing_config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", {"bedrock"}):
-            provider, model = h.select_provider("analyze", explicit="openai")
+            provider, model, _ = h.select_provider("analyze", explicit="openai")
         # Falls through to bedrock since openai is unavailable
         assert provider == "bedrock"
 
     def test_no_available_providers_returns_none(self, routing_config, provider_functions, provider_secrets):
         h = _load_handler(routing_config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", set()):
-            provider, model = h.select_provider("analyze")
+            provider, model, _ = h.select_provider("analyze")
         assert provider is None
         assert model is None
 
     def test_unknown_tool_falls_back_to_analyze_config(self, routing_config, provider_functions, provider_secrets):
         h = _load_handler(routing_config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", {"bedrock"}):
-            provider, model = h.select_provider("unknown_tool")
+            provider, model, _ = h.select_provider("unknown_tool")
         assert provider == "bedrock"
 
 
@@ -515,20 +515,20 @@ class TestPhiRouting:
         }
         h = _load_handler(config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", {"bedrock", "anthropic"}):
-            provider, model = h.select_provider("analyze", phi_mode=True)
+            provider, model, _ = h.select_provider("analyze", phi_mode=True)
         assert provider == "bedrock"
 
     def test_phi_request_never_selects_anthropic(self, routing_config, provider_functions, provider_secrets):
         h = _load_handler(routing_config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", {"bedrock", "anthropic", "openai", "gemini"}):
-            provider, model = h.select_provider("analyze", phi_mode=True)
+            provider, model, _ = h.select_provider("analyze", phi_mode=True)
         assert provider == "bedrock"
 
     def test_phi_request_never_selects_openai(self, routing_config, provider_functions, provider_secrets):
         h = _load_handler(routing_config, provider_functions, provider_secrets)
         # Only openai and gemini available — no Bedrock
         with patch.object(h, "_available_providers", {"openai", "gemini"}):
-            provider, model = h.select_provider("analyze", phi_mode=True)
+            provider, model, _ = h.select_provider("analyze", phi_mode=True)
         assert provider is None
 
     def test_phi_request_no_bedrock_configured_returns_none(self, provider_functions, provider_secrets):
@@ -544,7 +544,7 @@ class TestPhiRouting:
         }
         h = _load_handler(config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", {"anthropic", "openai"}):
-            provider, model = h.select_provider("analyze", phi_mode=True)
+            provider, model, _ = h.select_provider("analyze", phi_mode=True)
         assert provider is None
         assert model is None
 
@@ -553,14 +553,14 @@ class TestPhiRouting:
         h = _load_handler(routing_config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", {"bedrock", "openai"}):
             # Caller explicitly asks for openai but data_classification=phi
-            provider, model = h.select_provider("analyze", explicit="openai", phi_mode=True)
+            provider, model, _ = h.select_provider("analyze", explicit="openai", phi_mode=True)
         assert provider == "bedrock"
 
     def test_non_phi_request_unaffected(self, routing_config, provider_functions, provider_secrets):
         """Non-PHI requests still use the full preference list."""
         h = _load_handler(routing_config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", {"anthropic", "openai"}):
-            provider, model = h.select_provider("analyze", phi_mode=False)
+            provider, model, _ = h.select_provider("analyze", phi_mode=False)
         assert provider == "anthropic"
 
     def test_phi_field_in_invocation_triggers_bedrock_routing(self, routing_config, provider_functions, provider_secrets):
@@ -590,7 +590,7 @@ class TestPhiRouting:
         """data_classification='PHI' (uppercase) also triggers PHI mode."""
         h = _load_handler(routing_config, provider_functions, provider_secrets)
         with patch.object(h, "_available_providers", {"bedrock", "anthropic"}):
-            provider, _ = h.select_provider("analyze")  # non-phi for baseline
+            provider, _, _skip = h.select_provider("analyze")  # non-phi for baseline
         # Now test with uppercase PHI via full invocation
         success = {
             "content": "ok",
@@ -623,3 +623,419 @@ class TestPhiRouting:
             })}
             result = h.handle_tool_invocation(event)
         assert result["statusCode"] == 503
+
+
+# ---------------------------------------------------------------------------
+# CORS header (#43)
+# ---------------------------------------------------------------------------
+
+class TestCorsHeader:
+    def test_cors_wildcard_by_default(self, routing_config, provider_functions, provider_secrets):
+        """Without CORS_ALLOWED_ORIGIN env var, header defaults to '*'."""
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        result = h.handle_status()
+        assert result["headers"]["Access-Control-Allow-Origin"] == "*"
+
+    def test_cors_header_uses_env_var(self, routing_config, provider_functions, provider_secrets):
+        """CORS_ALLOWED_ORIGIN env var overrides the wildcard."""
+        env = {
+            "ROUTING_CONFIG": json.dumps(routing_config),
+            "PROVIDER_FUNCTIONS": json.dumps(provider_functions),
+            "PROVIDER_SECRETS": json.dumps(provider_secrets),
+            "CORS_ALLOWED_ORIGIN": "https://quicksuite.example.edu",
+        }
+        with patch.dict(os.environ, env):
+            import handler
+            importlib.reload(handler)
+            h = handler
+        result = h.handle_status()
+        assert result["headers"]["Access-Control-Allow-Origin"] == "https://quicksuite.example.edu"
+
+    def test_cors_header_present_on_error_responses(self, routing_config, provider_functions, provider_secrets):
+        """CORS header is set on 400 error responses too."""
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        event = {"tool": "analyze", "body": json.dumps({})}
+        result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 400
+        assert "Access-Control-Allow-Origin" in result["headers"]
+
+
+# ---------------------------------------------------------------------------
+# Cognito claims auth (#41)
+# ---------------------------------------------------------------------------
+
+class TestCognitoClaimsAuth:
+    def _event_with_claims(self, prompt, claims, body_overrides=None):
+        body = {"prompt": prompt}
+        if body_overrides:
+            body.update(body_overrides)
+        return {
+            "tool": "analyze",
+            "body": json.dumps(body),
+            "requestContext": {
+                "authorizer": {"claims": claims},
+                "requestId": "req-test",
+            },
+        }
+
+    def _success_payload(self):
+        return {
+            "content": "ok",
+            "provider": "bedrock",
+            "model": "m",
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "guardrail_applied": False,
+            "guardrail_blocked": False,
+        }
+
+    def test_claims_sub_used_as_user_id(self, routing_config, provider_functions, provider_secrets):
+        """user_id from Cognito sub, not body."""
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(self._success_payload())), \
+             patch.object(h, "spend_record_write") as mock_spend:
+            event = self._event_with_claims(
+                "test",
+                claims={"sub": "cognito-uuid-123", "custom:department": "cs"},
+                body_overrides={"user_id": "should-be-ignored"},
+            )
+            h.handle_tool_invocation(event)
+        call_kwargs = mock_spend.call_args[1]
+        assert call_kwargs["user_id"] == "cognito-uuid-123"
+
+    def test_claims_department_used_not_body(self, routing_config, provider_functions, provider_secrets):
+        """department from Cognito custom:department, not body."""
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(self._success_payload())), \
+             patch.object(h, "spend_record_write") as mock_spend:
+            event = self._event_with_claims(
+                "test",
+                claims={"sub": "user-abc", "custom:department": "biology"},
+                body_overrides={"department": "wrong-dept"},
+            )
+            h.handle_tool_invocation(event)
+        call_kwargs = mock_spend.call_args[1]
+        assert call_kwargs["department"] == "biology"
+
+    def test_no_claims_falls_back_to_body(self, routing_config, provider_functions, provider_secrets):
+        """Without claims, body department and user_id are used."""
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(self._success_payload())), \
+             patch.object(h, "spend_record_write") as mock_spend:
+            event = {
+                "tool": "analyze",
+                "body": json.dumps({"prompt": "test", "department": "physics", "user_id": "alice"}),
+            }
+            h.handle_tool_invocation(event)
+        call_kwargs = mock_spend.call_args[1]
+        assert call_kwargs["department"] == "physics"
+        assert call_kwargs["user_id"] == "alice"
+
+    def test_empty_claims_dict_falls_back_to_body(self, routing_config, provider_functions, provider_secrets):
+        """Empty claims dict (no attributes) treats as no-claims path."""
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(self._success_payload())), \
+             patch.object(h, "spend_record_write") as mock_spend:
+            event = {
+                "tool": "analyze",
+                "body": json.dumps({"prompt": "test", "department": "math", "user_id": "bob"}),
+                "requestContext": {"authorizer": {"claims": {}}},
+            }
+            h.handle_tool_invocation(event)
+        call_kwargs = mock_spend.call_args[1]
+        assert call_kwargs["department"] == "math"
+
+
+# ---------------------------------------------------------------------------
+# Content audit logging (#33)
+# ---------------------------------------------------------------------------
+
+class TestContentAuditLogging:
+    def _success_payload(self):
+        return {
+            "content": "The answer is 42",
+            "provider": "bedrock",
+            "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "guardrail_applied": True,
+            "guardrail_blocked": False,
+        }
+
+    def test_audit_log_emitted_when_enabled(self, routing_config, provider_functions, provider_secrets, caplog):
+        """When CONTENT_AUDIT_LOGGING=true, a structured audit record is logged."""
+        import logging
+        env = {
+            "ROUTING_CONFIG": json.dumps(routing_config),
+            "PROVIDER_FUNCTIONS": json.dumps(provider_functions),
+            "PROVIDER_SECRETS": json.dumps(provider_secrets),
+            "CONTENT_AUDIT_LOGGING": "true",
+        }
+        with patch.dict(os.environ, env):
+            import handler
+            importlib.reload(handler)
+            h = handler
+
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(self._success_payload())), \
+             patch.object(h, "spend_record_write"), \
+             caplog.at_level(logging.INFO):
+            event = {"tool": "analyze", "body": json.dumps({"prompt": "What is 6 * 7?"})}
+            h.handle_tool_invocation(event)
+
+        audit_records = [r for r in caplog.records if '"audit_log": "content"' in r.getMessage()]
+        assert len(audit_records) >= 1
+        record = json.loads(audit_records[0].getMessage())
+        assert record["audit_log"] == "content"
+        assert "prompt_hash" in record
+        assert "response_hash" in record
+        assert len(record["prompt_hash"]) == 64  # SHA-256 hex
+        assert len(record["response_hash"]) == 64
+
+    def test_raw_prompt_not_in_audit_log(self, routing_config, provider_functions, provider_secrets, caplog):
+        """Raw prompt text must NOT appear in any log record."""
+        import logging
+        env = {
+            "ROUTING_CONFIG": json.dumps(routing_config),
+            "PROVIDER_FUNCTIONS": json.dumps(provider_functions),
+            "PROVIDER_SECRETS": json.dumps(provider_secrets),
+            "CONTENT_AUDIT_LOGGING": "true",
+        }
+        prompt_text = "secret-financial-data-do-not-log-xyz123"
+        with patch.dict(os.environ, env):
+            import handler
+            importlib.reload(handler)
+            h = handler
+
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(self._success_payload())), \
+             patch.object(h, "spend_record_write"), \
+             caplog.at_level(logging.DEBUG):
+            event = {"tool": "analyze", "body": json.dumps({"prompt": prompt_text})}
+            h.handle_tool_invocation(event)
+
+        # No log record should contain the raw prompt text (except the initial
+        # structured log of the full event at handler entry — exclude that one
+        # and check the audit-specific records)
+        audit_records = [r for r in caplog.records if '"audit_log": "content"' in r.getMessage()]
+        for record in audit_records:
+            assert prompt_text not in record.getMessage()
+
+    def test_audit_log_not_emitted_when_disabled(self, routing_config, provider_functions, provider_secrets, caplog):
+        """When CONTENT_AUDIT_LOGGING is not set, no audit record is emitted."""
+        import logging
+        h = _load_handler(routing_config, provider_functions, provider_secrets)
+
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(self._success_payload())), \
+             patch.object(h, "spend_record_write"), \
+             caplog.at_level(logging.INFO):
+            event = {"tool": "analyze", "body": json.dumps({"prompt": "test"})}
+            h.handle_tool_invocation(event)
+
+        audit_records = [r for r in caplog.records if '"audit_log": "content"' in r.getMessage()]
+        assert len(audit_records) == 0
+
+
+# ---------------------------------------------------------------------------
+# Capability and context-window routing
+# ---------------------------------------------------------------------------
+
+def _caps_routing_config():
+    """Routing config with model_capabilities and model_context_windows."""
+    return {
+        "routing": {
+            "analyze": {
+                "preferred": [
+                    "bedrock/anthropic.claude-sonnet-4-20250514-v1:0",
+                    "anthropic/claude-sonnet-4-20250514",
+                    "openai/gpt-4o",
+                    "gemini/gemini-2.5-pro",
+                ],
+                "system_prompt": "You are an expert analyst.",
+            },
+            "summarize": {
+                "preferred": [
+                    "bedrock/amazon.nova-pro-v1:0",
+                    "openai/gpt-4o-mini",
+                ],
+                "system_prompt": "You are a concise summarizer.",
+            },
+        },
+        "defaults": {"max_tokens": 4096, "temperature": 0.7},
+        "model_capabilities": {
+            "bedrock/anthropic.claude-sonnet-4-20250514-v1:0": ["vision", "long_context", "function_calling", "structured_output"],
+            "anthropic/claude-sonnet-4-20250514": ["vision", "long_context", "function_calling", "structured_output"],
+            "openai/gpt-4o": ["vision", "function_calling", "structured_output"],
+            "gemini/gemini-2.5-pro": ["vision", "long_context", "function_calling", "structured_output"],
+            "bedrock/amazon.nova-pro-v1:0": ["vision", "function_calling"],
+            "openai/gpt-4o-mini": ["function_calling"],
+        },
+        "model_context_windows": {
+            "bedrock/anthropic.claude-sonnet-4-20250514-v1:0": 200000,
+            "anthropic/claude-sonnet-4-20250514": 200000,
+            "openai/gpt-4o": 128000,
+            "gemini/gemini-2.5-pro": 1000000,
+            "bedrock/amazon.nova-pro-v1:0": 300000,
+            "openai/gpt-4o-mini": 128000,
+        },
+    }
+
+
+class TestCapabilityAndContextRouting:
+    def test_capability_match_routes_to_correct_provider(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        # All four providers have "vision"; bedrock is first in preferred list
+        with patch.object(h, "_available_providers", {"bedrock", "anthropic", "openai", "gemini"}):
+            pk, mid, reason = h.select_provider("analyze", required_capabilities=["vision"])
+        assert pk == "bedrock"
+        assert reason == ""
+
+    def test_missing_cap_skips_provider(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        # Only gemini has "long_context" in the config; remove bedrock and anthropic from available
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        with patch.object(h, "_available_providers", {"openai", "gemini"}):
+            # openai/gpt-4o lacks "long_context"; gemini has it
+            pk, mid, reason = h.select_provider("analyze", required_capabilities=["long_context"])
+        assert pk == "gemini"
+        assert reason == ""
+
+    def test_all_caps_missing_returns_unsatisfiable(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        with patch.object(h, "_available_providers", {"openai"}):
+            # openai/gpt-4o lacks "long_context"
+            pk, mid, reason = h.select_provider("analyze", required_capabilities=["long_context"])
+        assert pk is None
+        assert reason == "unsatisfiable_capabilities"
+
+    def test_context_fits_model_a_selects_a(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        # budget of 50000 fits all models
+        with patch.object(h, "_available_providers", {"bedrock", "anthropic", "openai"}):
+            pk, mid, reason = h.select_provider("analyze", context_budget=50000)
+        assert pk == "bedrock"
+        assert reason == ""
+
+    def test_context_exceeds_small_model_falls_to_larger(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        # budget of 150000 exceeds openai (128k) but fits bedrock/anthropic (200k) and gemini (1M)
+        with patch.object(h, "_available_providers", {"openai", "gemini"}):
+            # openai first in preferred would be skipped (128k < 150k); gemini selected
+            pk, mid, reason = h.select_provider("analyze", context_budget=150000)
+        assert pk == "gemini"
+        assert reason == ""
+
+    def test_context_exceeds_all_returns_context_limit_exceeded(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        # budget of 2000000 exceeds all models
+        with patch.object(h, "_available_providers", {"bedrock", "anthropic", "openai", "gemini"}):
+            pk, mid, reason = h.select_provider("analyze", context_budget=2000000)
+        assert pk is None
+        assert reason == "context_limit_exceeded"
+
+    def test_invocation_returns_400_context_limit_exceeded(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        # Patch select_provider to return context_limit_exceeded
+        with patch.object(h, "select_provider", return_value=(None, None, "context_limit_exceeded")), \
+             patch.object(h, "_available_providers", {"bedrock"}):
+            event = {"tool": "analyze", "body": json.dumps({"prompt": "Hello"})}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 400
+        body = json.loads(result["body"])
+        assert body["code"] == "context_limit_exceeded"
+        assert "tokens_in_estimate" in body
+
+    def test_invocation_returns_400_unsatisfiable_capabilities(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        with patch.object(h, "select_provider", return_value=(None, None, "unsatisfiable_capabilities")), \
+             patch.object(h, "_available_providers", {"bedrock"}):
+            event = {"tool": "analyze", "body": json.dumps({"prompt": "Hello", "capabilities": ["hologram"]})}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 400
+        body = json.loads(result["body"])
+        assert body["code"] == "unsatisfiable_capabilities"
+
+    def test_tokens_in_estimate_present_in_successful_response(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        success = {
+            "content": "ok", "provider": "bedrock",
+            "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+            "input_tokens": 10, "output_tokens": 5,
+            "guardrail_applied": False, "guardrail_blocked": False,
+        }
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(success)), \
+             patch.object(h, "emit_usage_metrics"), \
+             patch.object(h, "spend_record_write"):
+            event = {"tool": "analyze", "body": json.dumps({"prompt": "Hello", "temperature": 0.5})}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert "tokens_in_estimate" in body
+        assert body["tokens_in_estimate"] > 0
+
+    def test_capabilities_as_string_coerced_to_list(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        success = {
+            "content": "ok", "provider": "bedrock",
+            "model": "anthropic.claude-sonnet-4-20250514-v1:0",
+            "input_tokens": 10, "output_tokens": 5,
+            "guardrail_applied": False, "guardrail_blocked": False,
+        }
+        with patch.object(h, "_available_providers", {"bedrock"}), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(success)), \
+             patch.object(h, "emit_usage_metrics"), \
+             patch.object(h, "spend_record_write"):
+            # capabilities sent as a single string — should be coerced to ["vision"]
+            event = {"tool": "analyze", "body": json.dumps({"prompt": "Hello", "capabilities": "vision", "temperature": 0.5})}
+            result = h.handle_tool_invocation(event)
+        assert result["statusCode"] == 200
+
+    def test_model_with_no_context_window_never_skipped(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        # Remove model_context_windows entirely — all windows default to 0 (unconfigured)
+        del cfg["model_context_windows"]
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        with patch.object(h, "_available_providers", {"bedrock"}):
+            # Even with a huge budget, model with no window configured is never skipped
+            pk, mid, reason = h.select_provider("analyze", context_budget=9999999)
+        assert pk == "bedrock"
+        assert reason == ""
+
+    def test_fallback_chain_respects_capability_filter(self, provider_functions, provider_secrets):
+        cfg = _caps_routing_config()
+        h = _load_handler(cfg, provider_functions, provider_secrets)
+        # bedrock (first in list) fails; anthropic has "long_context" so it should be selected
+        # openai lacks "long_context"
+        success_payload = {
+            "content": "Fallback result", "provider": "anthropic",
+            "model": "claude-sonnet-4-20250514",
+            "input_tokens": 80, "output_tokens": 40,
+            "guardrail_applied": False, "guardrail_blocked": False,
+        }
+        with patch.object(h, "_available_providers", {"bedrock", "anthropic", "openai", "gemini"}), \
+             patch.object(h, "emit_usage_metrics"), \
+             patch.object(h.lambda_client, "invoke", return_value=_make_lambda_payload(success_payload)):
+            result = h._fallback(
+                "analyze", "bedrock",
+                {"model": "anthropic.claude-sonnet-4-20250514-v1:0", "prompt": "Hello"},
+                {"error": "throttled"},
+                required_capabilities=["long_context"],
+            )
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert body["provider"] == "anthropic"

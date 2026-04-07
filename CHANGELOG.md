@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-04-07
+
+### Added
+- **Issue #34: Model capability routing** — `routing_config.yaml` gains two new top-level dicts: `model_capabilities` (keyed by `provider/model_id`, value is a list of capability strings such as `vision`, `long_context`, `function_calling`, `structured_output`) and `model_context_windows` (keyed by `provider/model_id`, value is the token limit integer). Callers may pass a `capabilities` field (string or list) in the request body; any provider whose capability set does not satisfy all required capabilities is skipped. The existing `preferred` list format is unchanged — backward compatible.
+- **Issue #35: Context window enforcement** — `estimate_tokens(text)` helper (len // 4 heuristic) computes a total context budget from prompt + system prompt + conversation context + `max_tokens`. Each candidate provider is skipped if its `model_context_windows` entry (when configured) is smaller than the budget. A window of `0` (unconfigured) is never treated as a constraint.
+- `select_provider()` now returns a 3-tuple `(provider_key, model_id, skip_reason)` where `skip_reason` is `""` on success, `"context_limit_exceeded"`, or `"unsatisfiable_capabilities"`. The fallback chain respects the same capability and context filters.
+- `handle_tool_invocation()` maps skip reasons to distinct HTTP error responses: `context_limit_exceeded` → HTTP 400 with `code` and `tokens_in_estimate` fields; `unsatisfiable_capabilities` → HTTP 400 with `code` and the requested capability list. Every successful response now includes `tokens_in_estimate`.
+- `_get_model_caps()` and `_get_context_window()` helpers read from the new config dicts (default to `[]` / `0` when absent).
+
+### Tests
+- 12 new tests in `TestCapabilityAndContextRouting`: capability match routes correctly, missing cap skips provider, all caps missing → 400 `unsatisfiable_capabilities`, context fits model → selected, context exceeds smaller model → falls to larger, context exceeds all → 400 `context_limit_exceeded`, `tokens_in_estimate` in 400 body, `tokens_in_estimate` in 200 body, `capabilities` as string coerced to list, unconfigured context window never causes skip, fallback chain respects capability filter.
+
 ## [0.10.0] - 2026-04-06
 
 ### Security
