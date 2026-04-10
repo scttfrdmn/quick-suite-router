@@ -9,7 +9,7 @@
   ],
 
   "integration_name": "Quick Suite Model Router",
-  "integration_description": "Multi-provider LLM routing with Bedrock Guardrails governance. Routes analyze, generate, research, summarize, and code tasks to the best available model (Bedrock, Anthropic, OpenAI, or Gemini). Supports per-department provider overrides.",
+  "integration_description": "Multi-provider LLM routing with Bedrock Guardrails governance. Routes analyze, generate, research, summarize, code, and extract tasks to the best available model (Bedrock, Anthropic, OpenAI, or Gemini). Supports per-department provider overrides, capability routing, and PHI-safe routing.",
 
   "agentcore_gateway": {
     "comment": "Register the API Gateway endpoint as an AgentCore Gateway OpenAPI target, then point Quick Suite at your AgentCore Gateway MCP endpoint.",
@@ -142,6 +142,29 @@
         "prompt": "Write an R script to run a logistic regression on this enrollment dataset",
         "department": "institutional-research",
         "temperature": 0.1
+      }
+    },
+    {
+      "name": "extract",
+      "description": "Extract structured data from scientific or analytical text. Supports extraction types: effect_sizes, confounds, methods_profile, open_problems, citations. Providers use native JSON mode for reliable structured output.",
+      "inputSchema": {
+        "prompt": "string (required) — the text to extract from",
+        "extraction_types": "array of strings (required) — types to extract: effect_sizes, confounds, methods_profile, open_problems, citations",
+        "department": "string (optional) — department name for provider routing override",
+        "provider": "string (optional) — force a specific provider",
+        "max_tokens": "integer (optional, default 4096)",
+        "temperature": "number (optional, 0.0–1.0, default 0.3)",
+        "store_at_uri": "string (optional) — S3 URI to persist extracted data (e.g. open_problems gap list for clAWS watch consumption)"
+      },
+      "example_prompts": [
+        "Extract effect sizes and sample sizes from this clinical trial abstract",
+        "Pull the methods profile and confounders from this paper",
+        "Extract open problems and research gaps from this review article"
+      ],
+      "example_payload": {
+        "prompt": "Treatment group showed significant improvement (OR = 1.43, 95% CI [1.12, 1.82], p = 0.004, n = 847)...",
+        "extraction_types": ["effect_sizes", "methods_profile"],
+        "department": "research-office"
       }
     }
   ],

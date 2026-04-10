@@ -1,6 +1,6 @@
 [project]
-name = "quick-suite-model-router"
-version = "0.1.0"
+name = "quick-suite-router"
+version = "0.12.0"
 description = "Multi-provider LLM router for Amazon Quick Suite via Bedrock AgentCore Gateway"
 requires-python = ">=3.12"
 dependencies = [
