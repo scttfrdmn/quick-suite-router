@@ -17,6 +17,7 @@ dev = [
     "requests>=2.31",
     "ruff>=0.4",
     "cfn-lint>=1.0",
+    "pip-audit>=2.7",
 ]
 
 [tool.ruff]

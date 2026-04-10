@@ -1,0 +1,71 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 8 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: pip-audit
+        run: uv run pip-audit .
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk
+
+      - name: CDK synth
+        run: uv run cdk synth --quiet --no-asset-bundling
+        env:
+          CDK_DEFAULT_ACCOUNT: "123456789012"
+          CDK_DEFAULT_REGION: "us-east-1"
+
+      - name: cfn-lint
+        run: uv run cfn-lint cdk.out/*.template.json --ignore-checks W
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: 1
+
+      - name: Trivy IaC scan (cdk.out)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: cdk.out
+          severity: HIGH,CRITICAL
+          exit-code: 1
+
+      - name: Semgrep SAST
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: auto
