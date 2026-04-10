@@ -56,6 +56,7 @@ jobs:
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: 1
+          trivy-config: trivy.yaml
 
       - name: Trivy IaC scan (cdk.out)
         uses: aquasecurity/trivy-action@master
