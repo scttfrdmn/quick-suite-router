@@ -2,25 +2,27 @@
 
 ## Project Overview
 
-This is **quick-suite-router** — a CDK-deployable reference
-architecture that extends Amazon Quick Suite with multi-provider LLM
-access through Bedrock AgentCore Gateway.
+This is **campus-router** — a CDK-deployable AgentCore tool that provides
+governed multi-provider LLM routing through Bedrock AgentCore Gateway.
+Any agent that connects through AgentCore Gateway gets access to these
+routing tools: Quick Suite, Kiro, and custom agents all use the same
+endpoint.
 
 The core idea: universities have existing AI subscriptions (OpenAI site
 licenses, Google Gemini via Workspace, Anthropic agreements). Instead of
-asking them to abandon those investments for Quick Suite's built-in LLM,
-this router lets them bring their existing subscriptions INTO Quick Suite
-with full AWS governance (Bedrock Guardrails, CloudTrail, CloudWatch
-metering) applied to every call regardless of provider. The existing AI
-subscription becomes the on-ramp to AWS, not the competitor.
+asking them to abandon those investments, this router lets them bring their
+existing subscriptions into AWS governance with full Bedrock Guardrails,
+CloudTrail, and CloudWatch metering applied to every call regardless of
+provider. The existing AI subscription becomes the on-ramp to AgentCore
+(and therefore AWS), not the competitor.
 
 ## Project Tracking
 
 Work is tracked in GitHub — not in local files. Do not add TODO lists or task
 tracking to CLAUDE.md or create TODO.md files.
 
-- **Issues:** https://github.com/scttfrdmn/quick-suite-router/issues
-- **Milestones:** https://github.com/scttfrdmn/quick-suite-router/milestones
+- **Issues:** https://github.com/scttfrdmn/campus-router/issues
+- **Milestones:** https://github.com/scttfrdmn/campus-router/milestones
 - **Project board:** https://github.com/users/scttfrdmn/projects/44
 - **Changelog:** CHANGELOG.md (keepachangelog format, semver 2.0)
 
@@ -89,7 +91,7 @@ label. All release planning happens via milestones.
 ## Architecture
 
 ```
-Quick Suite
+Any MCP-capable agent (Quick Suite / Kiro / custom)
     | MCP Actions Integration
     v
 AgentCore Gateway (MCP server)
@@ -140,7 +142,7 @@ Plus one AgentCore Lambda target:
 
 ## Key Design Decisions
 
-1. **Task-oriented tools, not provider-oriented.** Quick Suite users see
+1. **Task-oriented tools, not provider-oriented.** Agents and users see
    `analyze`, `generate`, `research`, `summarize`, `code`, `extract` — not
    "call Claude" or "call GPT". The router picks the best available provider.
 
@@ -260,10 +262,12 @@ Friedman) works in AWS business development focused on academic research
 computing. The target customers are R1 universities.
 
 The wedge strategy: "We already have an OpenAI subscription" is the most
-common objection to Quick Suite adoption. This router turns that objection
+common objection to AgentCore adoption. This router turns that objection
 into an on-ramp. The university keeps their OpenAI spend, gains governance,
-and runs orchestration on AWS. Once orchestration is on AWS, migrating
-individual model calls to Bedrock is a config change.
+and runs orchestration on AWS via AgentCore Gateway. Once orchestration is
+on AgentCore, migrating individual model calls to Bedrock is a config change,
+and adding other Campus AgentCore tools (data access, compute, clAWS) is
+a Gateway registration step.
 
 The GTM materials in `gtm/` are for Scott's BD peers and account managers.
 They contain discovery questions, demo scripts, objection handling, and

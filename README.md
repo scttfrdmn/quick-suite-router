@@ -1,21 +1,21 @@
 # Quick Suite Router
 
-**Bring your existing AI subscriptions into Amazon Quick Suite — with full AWS governance on every call.**
+**Bring your existing AI subscriptions into any agent connected through Amazon Bedrock AgentCore Gateway — with full AWS governance on every call.**
 
-Quick Suite ships with one built-in language model. That's fine for many tasks, but
-universities and research institutions typically have existing AI agreements — an OpenAI
+Universities and research institutions typically have existing AI agreements — an OpenAI
 site license, an Anthropic enterprise subscription, or Google AI through a Workspace
-agreement. Today, using those models means leaving Quick Suite: a separate browser tab,
-no BI integration, no workflow automation, and no centralized governance over what the
-models say.
+agreement. Without this router, using those models means stepping outside the governed
+environment: a separate browser tab, no BI integration, no workflow automation, and no
+centralized governance over what the models say.
 
-The Router solves this by registering six task-oriented tools in Quick Suite's chat
-interface and routing each request to the best available model from any of your configured
-providers. An analyst working in Quick Suite never needs to know or choose which model
-answered — they just work. IT and compliance get a single audit trail and Bedrock
-Guardrails governance on every response, regardless of which provider generated it.
+The Router solves this by registering six task-oriented tools through AgentCore Gateway
+and routing each request to the best available model from any of your configured
+providers. Users of any connected agent (Quick Suite, Kiro, custom) never need to know
+or choose which model answered — they just work. IT and compliance get a single audit
+trail and Bedrock Guardrails governance on every response, regardless of which provider
+generated it.
 
-## What Quick Suite Alone Can't Do Here
+## What most agents can't do without this router
 
 - Prefer a specific model for a specific task type (e.g., Claude for research synthesis, GPT-4o for code generation)
 - Match tasks to models by required capabilities (structured output, long context, vision) and context window budget
@@ -134,8 +134,8 @@ shared-Gateway configuration.
 ## Quick Start
 
 ```bash
-git clone https://github.com/scttfrdmn/quick-suite-router.git
-cd quick-suite-router
+git clone https://github.com/scttfrdmn/campus-router.git
+cd campus-router
 
 uv sync --extra dev --extra cdk   # or: pip install -r requirements.txt
 
